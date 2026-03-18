@@ -1,0 +1,5 @@
+period,reporterCode,reporterDesc,partnerCode,partnerDesc,cmdCode,cmdDesc,flowCode,flowDesc,primaryValue,netWgt,qty,qtyUnitAbbr
+2022,380,Italy,276,Germany,100590,"Cereals; maize (corn), other than seed",X,Export,315832.451,428541.0,428541.0,kg
+2023,380,Italy,276,Germany,100590,"Cereals; maize (corn), other than seed",X,Export,134610.374,80383.0,80383.0,kg
+2022,380,Italy,276,Germany,120740,"Oil seeds; sesamum seeds, whether or not broken",X,Export,482053.018,93812.0,93812.0,kg
+2023,380,Italy,276,Germany,120740,"Oil seeds; sesamum seeds, whether or not broken",X,Export,861360.208,341444.0,341444.0,kg

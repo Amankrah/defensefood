@@ -1,0 +1,5 @@
+period,reporterCode,reporterDesc,partnerCode,partnerDesc,cmdCode,cmdDesc,flowCode,flowDesc,primaryValue,netWgt,qty,qtyUnitAbbr
+2022,586,Pakistan,251,France,100630,"Cereals; rice, semi-milled or wholly milled, whether or not polished or glazed",X,Export,14447410.6,10299000.0,10299000.0,kg
+2023,586,Pakistan,251,France,100630,"Cereals; rice, semi-milled or wholly milled, whether or not polished or glazed",X,Export,18270432.099,13344000.0,13344000.0,kg
+2022,586,Pakistan,251,France,1006,Rice,X,Export,27637558.232,25464000.0,25464000.0,kg
+2023,586,Pakistan,251,France,1006,Rice,X,Export,22932052.674,17398000.0,17398000.0,kg

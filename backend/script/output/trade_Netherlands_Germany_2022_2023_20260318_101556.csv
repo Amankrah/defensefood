@@ -1,0 +1,4 @@
+period,reporterCode,reporterDesc,partnerCode,partnerDesc,cmdCode,cmdDesc,flowCode,flowDesc,primaryValue,netWgt,qty,qtyUnitAbbr
+2023,528,Netherlands,276,Germany,100630,"Cereals; rice, semi-milled or wholly milled, whether or not polished or glazed",X,Export,116995272.6,63506263.0,63506263.0,kg
+2022,528,Netherlands,276,Germany,120740,"Oil seeds; sesamum seeds, whether or not broken",X,Export,12208743.591,4812832.0,4812832.0,kg
+2023,528,Netherlands,276,Germany,120740,"Oil seeds; sesamum seeds, whether or not broken",X,Export,10621823.907,3582181.0,3582181.0,kg

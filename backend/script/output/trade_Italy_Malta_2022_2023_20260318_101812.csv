@@ -1,0 +1,5 @@
+period,reporterCode,reporterDesc,partnerCode,partnerDesc,cmdCode,cmdDesc,flowCode,flowDesc,primaryValue,netWgt,qty,qtyUnitAbbr
+2022,380,Italy,470,Malta,100829,"Cereals; millet, other than seed",X,Export,1639.597,282.0,282.0,kg
+2023,380,Italy,470,Malta,110429,"Cereal grains; worked, other than rolled or flaked (e.g. Hulled, pearled, sliced or kibbled) of cereals, excluding oats and maize, and rice of heading no.1006",X,Export,3852.56,1271.0,1271.0,kg
+2022,380,Italy,470,Malta,120740,"Oil seeds; sesamum seeds, whether or not broken",X,Export,7847.318,1347.0,1347.0,kg
+2023,380,Italy,470,Malta,120740,"Oil seeds; sesamum seeds, whether or not broken",X,Export,22592.027,4360.0,4360.0,kg

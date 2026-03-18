@@ -1,0 +1,4 @@
+period,reporterCode,reporterDesc,partnerCode,partnerDesc,cmdCode,cmdDesc,flowCode,flowDesc,primaryValue,netWgt,qty,qtyUnitAbbr
+2022,586,Pakistan,528,Netherlands,100630,"Cereals; rice, semi-milled or wholly milled, whether or not polished or glazed",X,Export,25657603.798,21534000.0,21534000.0,kg
+2022,586,Pakistan,528,Netherlands,1006,Rice,X,Export,51511410.443,57501000.0,57501000.0,kg
+2023,586,Pakistan,528,Netherlands,1006,Rice,X,Export,65547798.889,53215000.0,53215000.0,kg

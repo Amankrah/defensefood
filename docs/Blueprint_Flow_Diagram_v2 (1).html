@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blueprint Flow — EU Food Fraud Vulnerability Intelligence System</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;600&family=Instrument+Serif:ital@0;1&display=swap');
+
+:root {
+  --bg: #FAFBFD;
+  --white: #FFFFFF;
+  --text: #1a1a2e;
+  --text2: #3d3d5c;
+  --text-dim: #6b7280;
+  --border: #e2e5ed;
+  --border-strong: #cbd0db;
+  --blue: #2563eb;
+  --blue-bg: #eff4ff;
+  --blue-border: #bfdbfe;
+  --cyan: #0891b2;
+  --cyan-bg: #ecfeff;
+  --cyan-border: #a5f3fc;
+  --amber: #d97706;
+  --amber-bg: #fffbeb;
+  --amber-border: #fde68a;
+  --purple: #7c3aed;
+  --purple-bg: #f5f3ff;
+  --purple-border: #ddd6fe;
+  --green: #059669;
+  --green-bg: #ecfdf5;
+  --green-border: #a7f3d0;
+  --red: #dc2626;
+  --red-bg: #fef2f2;
+  --red-border: #fecaca;
+  --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04);
+  --shadow-hover: 0 4px 16px rgba(0,0,0,0.08), 0 8px 32px rgba(0,0,0,0.04);
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 48px 32px 80px;
+}
+
+/* ── Header ── */
+.header {
+  text-align: center;
+  margin-bottom: 48px;
+  padding-bottom: 40px;
+  border-bottom: 2px solid var(--border);
+}
+.header .overline {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: var(--blue);
+  margin-bottom: 14px;
+}
+.header h1 {
+  font-family: 'Instrument Serif', serif;
+  font-size: clamp(30px, 4.5vw, 50px);
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--text);
+  margin-bottom: 14px;
+}
+.header h1 em {
+  font-style: italic;
+  color: var(--blue);
+}
+.header .subtitle {
+  font-size: 15px;
+  color: var(--text-dim);
+  max-width: 640px;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+
+/* ── Legend ── */
+.legend {
+  display: flex;
+  justify-content: center;
+  gap: 28px;
+  margin-bottom: 48px;
+  flex-wrap: wrap;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+}
+.legend-dot {
+  width: 12px; height: 12px; border-radius: 3px;
+}
+
+/* ── Tier Labels ── */
+.tier-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tier-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ── Node Row ── */
+.node-row {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 0;
+}
+
+/* ── Nodes ── */
+.node {
+  background: var(--white);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 20px 18px;
+  flex: 1;
+  min-width: 175px;
+  max-width: 272px;
+  box-shadow: var(--shadow);
+  transition: all 0.25s ease;
+  position: relative;
+}
+.node:hover {
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-2px);
+}
+.node .dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+  position: relative;
+  top: -1px;
+}
+.node .title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+}
+.node .desc {
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text2);
+}
+.node .tag {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 5px;
+  margin-top: 12px;
+}
+.node .formulas {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  line-height: 1.9;
+  color: var(--text);
+  margin-top: 4px;
+}
+
+/* Wide nodes */
+.node--wide { max-width: 620px; flex: unset; width: 100%; }
+.node--xwide { max-width: 880px; flex: unset; width: 100%; }
+
+/* Color variants */
+.node--cyan { border-color: var(--cyan-border); border-left: 4px solid var(--cyan); }
+.node--cyan .tag { background: var(--cyan-bg); color: var(--cyan); border: 1px solid var(--cyan-border); }
+.node--cyan .dot { background: var(--cyan); }
+
+.node--blue { border-color: var(--blue-border); border-left: 4px solid var(--blue); }
+.node--blue .tag { background: var(--blue-bg); color: var(--blue); border: 1px solid var(--blue-border); }
+.node--blue .dot { background: var(--blue); }
+
+.node--amber { border-color: var(--amber-border); border-left: 4px solid var(--amber); }
+.node--amber .tag { background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-border); }
+.node--amber .dot { background: var(--amber); }
+
+.node--purple { border-color: var(--purple-border); border-left: 4px solid var(--purple); }
+.node--purple .tag { background: var(--purple-bg); color: var(--purple); border: 1px solid var(--purple-border); }
+.node--purple .dot { background: var(--purple); }
+
+.node--green { border-color: var(--green-border); border-left: 4px solid var(--green); }
+.node--green .tag { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+.node--green .dot { background: var(--green); }
+
+.node--red { border-color: var(--red-border); border-left: 4px solid var(--red); }
+.node--red .tag { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+.node--red .dot { background: var(--red); }
+
+/* ── Connectors ── */
+.connector {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0;
+}
+.connector svg { overflow: visible; }
+
+/* ── Formula Band ── */
+.formula-band {
+  background: var(--amber-bg);
+  border: 1.5px solid var(--amber-border);
+  border-radius: 8px;
+  padding: 14px 24px;
+  text-align: center;
+  margin: 0 auto;
+  max-width: 880px;
+}
+.formula-band .label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin-bottom: 8px;
+}
+.formula-band .thresholds {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.formula-band .th {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 14px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.th--crit { background: #fecaca; color: #991b1b; }
+.th--high { background: #fed7aa; color: #9a3412; }
+.th--elev { background: #fde68a; color: #92400e; }
+.th--mod  { background: #bfdbfe; color: #1e40af; }
+.th--low  { background: #a7f3d0; color: #065f46; }
+
+/* ── Feedback Loop ── */
+.feedback-wrap {
+  max-width: 880px;
+  margin: 12px auto 0;
+}
+.feedback-wrap svg { width: 100%; overflow: visible; }
+
+/* ── Spacing ── */
+.section { margin-bottom: 8px; }
+
+/* ── Animations ── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.section { animation: fadeIn 0.5s ease-out both; }
+.section:nth-child(1) { animation-delay: 0.0s; }
+.section:nth-child(2) { animation-delay: 0.04s; }
+.section:nth-child(3) { animation-delay: 0.08s; }
+.section:nth-child(4) { animation-delay: 0.12s; }
+.section:nth-child(5) { animation-delay: 0.16s; }
+.section:nth-child(6) { animation-delay: 0.20s; }
+.section:nth-child(7) { animation-delay: 0.24s; }
+.section:nth-child(8) { animation-delay: 0.28s; }
+.section:nth-child(9) { animation-delay: 0.32s; }
+.section:nth-child(10) { animation-delay: 0.36s; }
+.section:nth-child(11) { animation-delay: 0.40s; }
+.section:nth-child(12) { animation-delay: 0.44s; }
+.section:nth-child(13) { animation-delay: 0.48s; }
+.section:nth-child(14) { animation-delay: 0.52s; }
+.section:nth-child(15) { animation-delay: 0.56s; }
+.section:nth-child(16) { animation-delay: 0.60s; }
+.section:nth-child(17) { animation-delay: 0.64s; }
+
+@media (max-width: 768px) {
+  .container { padding: 24px 16px 60px; }
+  .node { min-width: 150px; }
+  .legend { gap: 14px; }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- Header -->
+  <div class="header section">
+    <div class="overline">System Architecture Flow</div>
+    <h1>Blueprint for <em>Anticipating, Detecting</em> &amp; <em>Countering</em> Food Fraud in the EU</h1>
+    <div class="subtitle">End-to-end data pipeline from source ingestion through mathematical modelling to actionable intelligence output</div>
+  </div>
+
+  <!-- Legend -->
+  <div class="legend section">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--cyan)"></div>Data Sources</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--blue)"></div>Computation</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>Scoring</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--purple)"></div>Engines</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Outputs</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>Actions</div>
+  </div>
+
+  <!-- ═══ TIER 1 ═══ -->
+  <div class="section">
+    <div class="tier-label">Tier 1 — Data Source Ingestion</div>
+    <div class="node-row">
+      <div class="node node--cyan">
+        <div class="title"><span class="dot"></span>RASFF Window</div>
+        <div class="desc">Hazard notifications: commodity, origin, hazard type, severity classification, attention &amp; follow-up countries</div>
+        <span class="tag">Layer 1 · Daily</span>
+      </div>
+      <div class="node node--cyan">
+        <div class="title"><span class="dot"></span>UN Comtrade</div>
+        <div class="desc">Bilateral trade flows: HS-code level import quantity M(c,i,j,t) and value V(c,i,j,t)</div>
+        <span class="tag">Layer 2 · Monthly</span>
+      </div>
+      <div class="node node--cyan">
+        <div class="title"><span class="dot"></span>FAOSTAT</div>
+        <div class="desc">Production volumes P(c,i,t), food balance sheets, per capita supply D(c,i,t)</div>
+        <span class="tag">Layers 3–4 · Annual</span>
+      </div>
+      <div class="node node--cyan">
+        <div class="title"><span class="dot"></span>Eurostat</div>
+        <div class="desc">EU production (PRODCOM), import price indices, household consumption surveys</div>
+        <span class="tag">Layers 3–5 · Quarterly</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow -->
+  <div class="section">
+    <div class="connector">
+      <svg width="40" height="40"><line x1="20" y1="2" x2="20" y2="30" stroke="var(--cyan)" stroke-width="2"/><polygon points="14,28 20,38 26,28" fill="var(--blue)"/></svg>
+    </div>
+  </div>
+
+  <!-- ═══ TIER 2 ═══ -->
+  <div class="section">
+    <div class="tier-label">Tier 2 — Corridor Construction &amp; Entity Matching</div>
+    <div class="node-row">
+      <div class="node node--blue node--xwide">
+        <div class="title"><span class="dot"></span>Corridor Definition Engine</div>
+        <div class="desc">
+          Each RASFF notification <strong>r</strong> maps to corridors <strong>(c, i, j)</strong> where: <strong>c</strong> = commodity (HS-code matched), <strong>j</strong> = Origin(r), <strong>i</strong> ∈ Affected(r) = {notifying_country ∪ for_attention ∪ for_followUp}.<br>
+          Each corridor is then enriched with its Comtrade trade flow and FAOSTAT production/consumption data.
+        </div>
+        <span class="tag">Entity: Commodity × Origin × Destination</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow -->
+  <div class="section">
+    <div class="connector">
+      <svg width="40" height="40"><line x1="20" y1="2" x2="20" y2="30" stroke="var(--blue)" stroke-width="2"/><polygon points="14,28 20,38 26,28" fill="var(--blue)"/></svg>
+    </div>
+  </div>
+
+  <!-- ═══ TIER 3 ═══ -->
+  <div class="section">
+    <div class="tier-label">Tier 3 — Mathematical Model Layer</div>
+    <div class="node-row">
+      <div class="node node--blue">
+        <div class="title"><span class="dot"></span>Dependency Models</div>
+        <div class="formulas">
+          DS′ = P + M − X<br>
+          IDR = M(c,i,•,t) / DS′<br>
+          OCS = M(c,i,j,t) / M(c,i,•,t)<br>
+          BDI = IDR × OCS<br>
+          HHI = Σⱼ [OCS]²<br>
+          <strong>SCI = IDR × OCS × (1+HHI)</strong>
+        </div>
+        <span class="tag">§2 Dependency</span>
+      </div>
+      <div class="node node--blue">
+        <div class="title"><span class="dot"></span>Consumption Models</div>
+        <div class="formulas">
+          PCC = D(c,i,t) / Pop(i,t)<br>
+          CRS = 1 − (Rank−1)/(|C|−1)<br>
+          CV_D = σ[PCC] / μ[PCC]<br>
+          <strong>DIS = 1 − min(CV_D, 1)</strong>
+        </div>
+        <span class="tag">§3 Consumption</span>
+      </div>
+      <div class="node node--blue">
+        <div class="title"><span class="dot"></span>Hazard Signal Models</div>
+        <div class="formulas">
+          S(r) = W_class × W_risk<br>
+          <strong>HIS = Σᵣ S(r) · α^(t−tᵣ)</strong><br>
+          HDI = −Σₕ pₕ ln(pₕ)<br>
+          DGI = trade_share − notif_share
+        </div>
+        <span class="tag">§4 Hazards</span>
+      </div>
+      <div class="node node--blue">
+        <div class="title"><span class="dot"></span>Trade Flow Models</div>
+        <div class="formulas">
+          UV = V / M (unit value)<br>
+          Z_UV = (UV − μ) / σ<br>
+          Z_M = volume anomaly z-score<br>
+          MTD = mirror trade discrepancy<br>
+          <strong>ΔHHI, ΔOCS shifts</strong>
+        </div>
+        <span class="tag">§5 Trade</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow -->
+  <div class="section">
+    <div class="connector">
+      <svg width="40" height="40"><line x1="20" y1="2" x2="20" y2="30" stroke="var(--blue)" stroke-width="2"/><polygon points="14,28 20,38 26,28" fill="var(--blue)"/></svg>
+    </div>
+  </div>
+
+  <!-- ═══ TIER 3B ═══ -->
+  <div class="section">
+    <div class="tier-label">Tier 3b — Origin–Attention Country Network</div>
+    <div class="node-row">
+      <div class="node node--blue node--wide">
+        <div class="title"><span class="dot"></span>Exposure Network Graph G = (V, E)</div>
+        <div class="desc">
+          Directed weighted graph: edges <strong>(j → i)</strong> carry <em>w_trade</em>, <em>w_hazard</em>, <em>w_dep</em> per commodity.
+        </div>
+        <div class="formulas" style="margin-top:10px;">
+          <strong>ORPS(j,c,t)</strong> = Σᵢ BDI · HIS · PCC — origin risk propagation across EU<br>
+          <strong>ACEP(i,t)</strong> = Σ_c Σ_j BDI · HIS · CRS — total inbound exposure per country<br>
+          <strong>P̂(hazard|c,i,j)</strong> = R(c,i,j,T) / [M(c,i,j,T) / m̄(c)] — empirical detection rate
+        </div>
+        <span class="tag">§6 Network Intelligence</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow -->
+  <div class="section">
+    <div class="connector">
+      <svg width="40" height="44"><line x1="20" y1="2" x2="20" y2="34" stroke="var(--blue)" stroke-width="2" stroke-dasharray="4,3"/><polygon points="14,32 20,42 26,32" fill="var(--amber)"/></svg>
+    </div>
+  </div>
+
+  <!-- ═══ TIER 4 ═══ -->
+  <div class="section">
+    <div class="tier-label">Tier 4 — Normalisation &amp; Composite Scoring</div>
+    <div class="node-row">
+      <div class="node node--amber node--wide" style="max-width:700px;">
+        <div class="title"><span class="dot"></span>Corridor Vulnerability Score (CVS)</div>
+        <div class="desc" style="margin-bottom:10px;">Normalise each metric → percentile rank (log-percentile for HIS)</div>
+        <div class="formulas" style="text-align:center;font-size:13px;background:var(--amber-bg);padding:12px;border-radius:6px;border:1px solid var(--amber-border);">
+          <strong style="color:var(--amber);">CVS = [SCI_norm × CRS_norm] × (1 + wₕ·HIS_norm + wₚ·PAS_norm + w_sc·SCCS_norm)</strong><br>
+          <span style="font-size:11px;color:var(--text-dim);">BASE (structural dependency × demand) × (1 + AMPLIFIER (hazard + price + supply chain signals))</span>
+        </div>
+        <span class="tag">§7 · Weights: AHP / Equal / Empirical calibration</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Threshold band -->
+  <div class="section" style="margin-top:10px;">
+    <div class="formula-band">
+      <div class="label">CVS Classification Thresholds</div>
+      <div class="thresholds">
+        <span class="th th--crit">● Critical 80–100</span>
+        <span class="th th--high">● High 60–79</span>
+        <span class="th th--elev">● Elevated 40–59</span>
+        <span class="th th--mod">● Moderate 20–39</span>
+        <span class="th th--low">● Low 0–19</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow -->
+  <div class="section">
+    <div class="connector">
+      <svg width="40" height="44"><line x1="20" y1="2" x2="20" y2="34" stroke="var(--amber)" stroke-width="2"/><polygon points="14,32 20,42 26,32" fill="var(--purple)"/></svg>
+    </div>
+  </div>
+
+  <!-- ═══ TIER 5 ═══ -->
+  <div class="section">
+    <div class="tier-label">Tier 5 — Intelligence Engines</div>
+    <div class="node-row">
+      <div class="node node--purple">
+        <div class="title"><span class="dot"></span>Anticipation Engine</div>
+        <div class="desc">
+          <strong style="color:var(--purple);">Before incident</strong><br><br>
+          <strong>Structural scanning:</strong> High SCI + high CRS but no RASFF history → under-detected corridor<br><br>
+          <strong>Leading indicators:</strong> Trade surges (Z_M &gt; 2), price drops (Z_UV &lt; −2), dependency shifts (ΔOCS), rising low-severity notifications
+        </div>
+        <span class="tag">Proactive</span>
+      </div>
+      <div class="node node--purple">
+        <div class="title"><span class="dot"></span>Detection Engine</div>
+        <div class="desc">
+          <strong style="color:var(--purple);">During incident</strong><br><br>
+          <strong>RASFF processing:</strong> New notification → immediate corridor enrichment with all layer context<br><br>
+          <strong>Cross-layer correlation:</strong> Trade surge + price drop + rising notifications = convergent fraud signal
+        </div>
+        <span class="tag">Real-time</span>
+      </div>
+      <div class="node node--purple">
+        <div class="title"><span class="dot"></span>Countering Engine</div>
+        <div class="desc">
+          <strong style="color:var(--purple);">After / Enforcement</strong><br><br>
+          <strong>Intel packages:</strong> Risk profile + trade viz + dependency analysis + inspection targets<br><br>
+          <strong>Post-incident:</strong> Retrospective validation → weight adjustment → analogous corridor identification
+        </div>
+        <span class="tag">Reactive</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow -->
+  <div class="section">
+    <div class="connector">
+      <svg width="40" height="44"><line x1="20" y1="2" x2="20" y2="34" stroke="var(--purple)" stroke-width="2"/><polygon points="14,32 20,42 26,32" fill="var(--green)"/></svg>
+    </div>
+  </div>
+
+  <!-- ═══ TIER 6 ═══ -->
+  <div class="section">
+    <div class="tier-label">Tier 6 — Actionable Outputs</div>
+    <div class="node-row">
+      <div class="node node--green">
+        <div class="title"><span class="dot"></span>Global Risk Heatmap</div>
+        <div class="desc">All corridors colour-coded by CVS. Filter by commodity, origin, destination, hazard type.</div>
+        <span class="tag">Dashboard</span>
+      </div>
+      <div class="node node--green">
+        <div class="title"><span class="dot"></span>Corridor Deep-Dive</div>
+        <div class="desc">Full layer scores, RASFF timeline, trade charts, dependency metrics per corridor.</div>
+        <span class="tag">Analysis</span>
+      </div>
+      <div class="node node--green">
+        <div class="title"><span class="dot"></span>Intelligence Packages</div>
+        <div class="desc">Auto-generated risk profiles for CRITICAL / HIGH corridors. Distributed via FFN.</div>
+        <span class="tag">Enforcement</span>
+      </div>
+      <div class="node node--green">
+        <div class="title"><span class="dot"></span>Country &amp; Commodity Profiles</div>
+        <div class="desc">Per-Member-State ACEP, import dependency profile, inspection priority lists.</div>
+        <span class="tag">Strategic</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow -->
+  <div class="section">
+    <div class="connector">
+      <svg width="40" height="44"><line x1="20" y1="2" x2="20" y2="34" stroke="var(--green)" stroke-width="2"/><polygon points="14,32 20,42 26,32" fill="var(--red)"/></svg>
+    </div>
+  </div>
+
+  <!-- ═══ TIER 7 ═══ -->
+  <div class="section">
+    <div class="tier-label">Tier 7 — Action Triggers &amp; Stakeholder Distribution</div>
+    <div class="node-row">
+      <div class="node node--red">
+        <div class="title"><span class="dot"></span>CRITICAL / HIGH Alert</div>
+        <div class="desc">Immediate intelligence package to competent authorities. Coordinated EU action via FFN / DG SANTE.</div>
+        <span class="tag">CVS ≥ 60</span>
+      </div>
+      <div class="node node--red">
+        <div class="title"><span class="dot"></span>Inspection Targeting</div>
+        <div class="desc">Prioritised corridor lists per Member State. Tailored to import profile and lab capacity.</div>
+        <span class="tag">Member States</span>
+      </div>
+      <div class="node node--red">
+        <div class="title"><span class="dot"></span>Feedback Loop</div>
+        <div class="desc">Validated fraud outcomes → logistic regression recalibrates CVS weights → continuous model learning.</div>
+        <span class="tag">Model Calibration</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Feedback loop arrow -->
+  <div class="section">
+    <div class="feedback-wrap">
+      <svg viewBox="0 0 880 56" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <marker id="arrowUp" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse">
+            <polygon points="0,8 4,0 8,8" fill="var(--purple)"/>
+          </marker>
+        </defs>
+        <!-- Main feedback path -->
+        <path d="M 660 4 L 660 28 L 100 28 L 100 4"
+              fill="none" stroke="var(--purple)" stroke-width="2" stroke-dasharray="6 4"
+              marker-end="url(#arrowUp)" opacity="0.6"/>
+        <!-- Label -->
+        <text x="380" y="48" font-family="JetBrains Mono, monospace" font-size="10" font-weight="600"
+              fill="var(--purple)" text-anchor="middle" letter-spacing="1.5" opacity="0.7">
+          FEEDBACK → RECALIBRATE WEIGHTS → BACK TO TIER 4 SCORING
+        </text>
+      </svg>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

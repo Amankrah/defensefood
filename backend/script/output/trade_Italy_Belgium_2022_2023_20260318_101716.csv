@@ -1,0 +1,4 @@
+period,reporterCode,reporterDesc,partnerCode,partnerDesc,cmdCode,cmdDesc,flowCode,flowDesc,primaryValue,netWgt,qty,qtyUnitAbbr
+2022,380,Italy,56,Belgium,110220,Cereal flour; of maize (corn),X,Export,489691.833,502301.0,502301.0,kg
+2023,380,Italy,56,Belgium,110220,Cereal flour; of maize (corn),X,Export,687870.658,634907.0,634907.0,kg
+2022,380,Italy,56,Belgium,1006,Rice,X,Export,30612958.742,29025643.0,29025643.0,kg

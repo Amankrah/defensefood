@@ -1,0 +1,3 @@
+period,reporterCode,reporterDesc,partnerCode,partnerDesc,cmdCode,cmdDesc,flowCode,flowDesc,primaryValue,netWgt,qty,qtyUnitAbbr
+2022,616,Poland,380,Italy,100590,"Cereals; maize (corn), other than seed",X,Export,2867136.0,6018120.0,6018120.0,kg
+2023,616,Poland,380,Italy,100590,"Cereals; maize (corn), other than seed",X,Export,24140867.0,79442506.0,79442506.0,kg

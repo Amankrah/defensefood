@@ -1,0 +1,5 @@
+period,reporterCode,reporterDesc,partnerCode,partnerDesc,cmdCode,cmdDesc,flowCode,flowDesc,primaryValue,netWgt,qty,qtyUnitAbbr
+2023,380,Italy,724,Spain,110220,Cereal flour; of maize (corn),X,Export,24352028.023,20398950.0,20398950.0,kg
+2022,380,Italy,724,Spain,100590,"Cereals; maize (corn), other than seed",X,Export,1536712.813,3017950.0,3017950.0,kg
+2022,380,Italy,724,Spain,120740,"Oil seeds; sesamum seeds, whether or not broken",X,Export,46726.927,15280.0,15280.0,kg
+2023,380,Italy,724,Spain,120740,"Oil seeds; sesamum seeds, whether or not broken",X,Export,127149.621,35706.0,35706.0,kg

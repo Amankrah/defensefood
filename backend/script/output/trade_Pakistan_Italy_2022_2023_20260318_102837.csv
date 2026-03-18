@@ -1,0 +1,4 @@
+period,reporterCode,reporterDesc,partnerCode,partnerDesc,cmdCode,cmdDesc,flowCode,flowDesc,primaryValue,netWgt,qty,qtyUnitAbbr
+2022,586,Pakistan,380,Italy,100630,"Cereals; rice, semi-milled or wholly milled, whether or not polished or glazed",X,Export,29697105.238,30183000.0,30183000.0,kg
+2023,586,Pakistan,380,Italy,100630,"Cereals; rice, semi-milled or wholly milled, whether or not polished or glazed",X,Export,57560782.165,46852000.0,46852000.0,kg
+2022,586,Pakistan,380,Italy,1006,Rice,X,Export,87756781.434,97525000.0,97525000.0,kg

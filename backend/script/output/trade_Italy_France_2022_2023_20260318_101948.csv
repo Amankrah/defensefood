@@ -1,0 +1,6 @@
+period,reporterCode,reporterDesc,partnerCode,partnerDesc,cmdCode,cmdDesc,flowCode,flowDesc,primaryValue,netWgt,qty,qtyUnitAbbr
+2023,380,Italy,251,France,100630,"Cereals; rice, semi-milled or wholly milled, whether or not polished or glazed",X,Export,188513165.556,132506225.0,132506225.0,kg
+2022,380,Italy,251,France,100590,"Cereals; maize (corn), other than seed",X,Export,1155989.399,3169100.0,3169100.0,kg
+2023,380,Italy,251,France,100590,"Cereals; maize (corn), other than seed",X,Export,255336.178,645619.0,645619.0,kg
+2022,380,Italy,251,France,120740,"Oil seeds; sesamum seeds, whether or not broken",X,Export,243920.813,61757.0,61757.0,kg
+2023,380,Italy,251,France,120740,"Oil seeds; sesamum seeds, whether or not broken",X,Export,170827.467,38991.0,38991.0,kg
