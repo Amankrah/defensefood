@@ -65,7 +65,7 @@ defensefood/
         ├── lib/api.ts                  # Typed API client
         └── app/
             ├── dashboard/page.tsx      # Vulnerability dashboard
-            └── architecture/page.tsx   # System architecture diagram
+            └── page.tsx                # Landing page
 ```
 
 ---

@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "DefenseFood - EU Food Fraud Vulnerability Intelligence",
-  description: "Quantitative models for commodity dependency, origin-attention country trade relationships, and hazard-trade corridor integration.",
+  title: "DefenseFood | Food fraud risk dashboard",
+  description:
+    "Prioritise EU food safety and trade corridors: RASFF-linked hazard signals, dependency context, and clear scores for inspections and diagnostics.",
 };
 
 export default function RootLayout({

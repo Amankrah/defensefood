@@ -1,6 +1,8 @@
 """Scoring configuration and results endpoints."""
 
-from fastapi import APIRouter, Depends
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query
 
 from defensefood.api.dependencies import AppState, get_state
 from defensefood.models.scores import ScoringConfig
@@ -26,15 +28,26 @@ def update_scoring_config(
 
 
 @router.post("/recalculate")
-def recalculate_scores(state: AppState = Depends(get_state)):
-    """Trigger full re-scoring with current config."""
+def recalculate_scores(
+    config: Optional[ScoringConfig] = None,
+    limit: int = Query(1000, ge=1, le=5000),
+    state: AppState = Depends(get_state),
+):
+    """Trigger full re-scoring. Optionally pass a config to override current settings."""
+    effective_config = config or state.scoring_config
+    if config:
+        state.scoring_config = config
+
     scored = run_scoring_pipeline(
-        state.corridor_metrics.copy(),
-        state.scoring_config,
+        [c.copy() for c in state.corridor_metrics],
+        effective_config,
     )
+
+    # Persist scored results back to state
+    state.corridor_metrics = scored
 
     return {
         "status": "recalculated",
         "corridors_scored": len(scored),
-        "top_10": scored[:10],
+        "corridors": scored[:limit],
     }

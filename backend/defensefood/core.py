@@ -58,8 +58,12 @@ class DependencyEngine:
             shares = dependency.compute_ocs_shares(all_origin_imports)
             hhi = dependency.compute_hhi(shares)
 
-        sci = dependency.compute_sci(idr, ocs, hhi) if not np.isnan(hhi) else float("nan")
-        sci_norm = sci / 2.0 if not np.isnan(sci) else float("nan")
+        if np.isnan(hhi):
+            sci = float("nan")
+            sci_norm = float("nan")
+        else:
+            sci = dependency.compute_sci(idr, ocs, hhi)
+            sci_norm = dependency.compute_sci_normalised(idr, ocs, hhi)
 
         return {
             "ds_prime": ds,

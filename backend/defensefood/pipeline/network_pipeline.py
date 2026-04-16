@@ -32,13 +32,19 @@ def build_exposure_network(
     net = NetworkEngine()
 
     for c in corridors_with_metrics:
+        raw_bdi = c.get("bdi")
+        dep_weight = (
+            float(raw_bdi)
+            if raw_bdi is not None
+            else float(c.get("severity_total", 0) or 0)
+        )
         net.add_edge(
             origin_m49=c.get("origin_m49", 0),
             dest_m49=c.get("destination_m49", 0),
             commodity_hs=c.get("commodity_hs", ""),
-            trade_weight=c.get("bilateral_import_kg", 0.0),
-            hazard_weight=c.get("his", 0.0),
-            dep_weight=c.get("bdi", 0.0),
+            trade_weight=float(c.get("bilateral_import_kg", 0.0) or 0.0),
+            hazard_weight=float(c.get("his", 0.0) or 0.0),
+            dep_weight=dep_weight,
         )
 
     return net

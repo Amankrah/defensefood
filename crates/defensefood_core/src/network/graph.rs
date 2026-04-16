@@ -62,6 +62,11 @@ impl ExposureNetwork {
         });
     }
 
+    /// Get all node M49 codes in the network.
+    pub fn get_all_nodes(&self) -> Vec<u16> {
+        self.node_indices.keys().copied().collect()
+    }
+
     /// Number of nodes (countries) in the network.
     pub fn node_count(&self) -> usize {
         self.graph.node_count()

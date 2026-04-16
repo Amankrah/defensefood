@@ -6,6 +6,12 @@ from fastapi import APIRouter, Depends, Query
 
 from defensefood.api.dependencies import AppState, get_state
 from defensefood.ingestion.countries import get_country_name
+from defensefood.pipeline.dependency_pipeline import compute_corridor_dependency
+from defensefood.pipeline.trade_flow_pipeline import (
+    compute_concentration_shifts,
+    compute_mirror_discrepancy,
+    compute_unit_value_anomalies,
+)
 
 router = APIRouter(prefix="/corridors", tags=["corridors"])
 
@@ -47,13 +53,13 @@ def top_corridors(
     state: AppState = Depends(get_state),
 ):
     """Get top N corridors by vulnerability metric."""
-    valid_sorts = {"his", "severity_total", "notification_count", "hdi"}
+    valid_sorts = {"his", "severity_total", "notification_count", "hdi", "cvs"}
     if sort_by not in valid_sorts:
         sort_by = "his"
 
     results = sorted(
         state.corridor_metrics,
-        key=lambda c: c.get(sort_by, 0),
+        key=lambda c: c.get(sort_by, 0) or 0,
         reverse=True,
     )
 
@@ -81,6 +87,159 @@ def get_corridor_profile(
             return c
 
     return {"error": "Corridor not found"}
+
+
+@router.get("/{commodity_hs}/{dest_m49}/{origin_m49}/full")
+def get_corridor_full_profile(
+    commodity_hs: str,
+    dest_m49: int,
+    origin_m49: int,
+    state: AppState = Depends(get_state),
+):
+    """Full forensic profile: Section 2 + 4 + 5 + 7 metrics combined."""
+    # Section 4 (hazard) -- from pre-computed state
+    hazard = None
+    base = None
+    for c in state.corridor_metrics:
+        if (
+            c.get("commodity_hs") == commodity_hs
+            and c.get("destination_m49") == dest_m49
+            and c.get("origin_m49") == origin_m49
+        ):
+            base = c
+            hazard = {
+                "his": c.get("his", 0),
+                "hdi": c.get("hdi", 0),
+                "notification_count": c.get("notification_count", 0),
+                "severity_total": c.get("severity_total", 0),
+            }
+            break
+
+    if base is None:
+        return {"error": "Corridor not found"}
+
+    # Section 2 (dependency) -- compute from trade data
+    dependency = None
+    if state.trade_df is not None and not state.trade_df.empty:
+        periods = sorted(state.trade_df["period"].unique())
+        if periods:
+            dep_result = compute_corridor_dependency(
+                state.trade_df, commodity_hs, dest_m49, origin_m49,
+                int(periods[-1]),
+            )
+            if "error" not in dep_result:
+                dependency = dep_result
+
+    # Section 5 (trade anomalies) -- compute from trade data
+    trade_flow = None
+    if state.trade_df is not None and not state.trade_df.empty:
+        periods = sorted(state.trade_df["period"].unique())
+        if periods:
+            period = int(periods[-1])
+            uv_df = compute_unit_value_anomalies(
+                state.trade_df, commodity_hs, dest_m49, period
+            )
+            z_uv = float("nan")
+            unit_value = float("nan")
+            peers = []
+            if not uv_df.empty:
+                row = uv_df[uv_df["partnerCode"].astype(int) == origin_m49]
+                if not row.empty:
+                    z_uv = float(row.iloc[0]["z_uv"])
+                    unit_value = float(row.iloc[0]["unit_value"])
+                peers = [
+                    {"partnerCode": int(r["partnerCode"]), "unit_value": float(r["unit_value"]), "z_uv": float(r["z_uv"])}
+                    for _, r in uv_df.iterrows()
+                ]
+
+            mtd = compute_mirror_discrepancy(
+                state.trade_df, commodity_hs, dest_m49, origin_m49, period
+            )
+
+            delta_hhi = None
+            if len(periods) >= 2:
+                shifts = compute_concentration_shifts(
+                    state.trade_df, commodity_hs, dest_m49,
+                    int(periods[-1]), int(periods[-2]),
+                )
+                delta_hhi = shifts.get("delta_hhi")
+
+            trade_flow = {
+                "unit_value": unit_value,
+                "z_uv": z_uv,
+                "mtd": mtd,
+                "delta_hhi": delta_hhi,
+                "peer_unit_values": peers,
+            }
+
+    return {
+        "commodity_hs": commodity_hs,
+        "commodity_name": base.get("commodity_name", ""),
+        "destination_m49": dest_m49,
+        "destination_country": base.get("destination_country", ""),
+        "origin_m49": origin_m49,
+        "origin_country": base.get("origin_country", ""),
+        "dependency": dependency,
+        "hazard": hazard,
+        "trade_flow": trade_flow,
+        "cvs": base.get("cvs"),
+        "sci_norm": base.get("sci_norm"),
+        "his_norm": base.get("his_norm"),
+        "crs_norm": base.get("crs_norm"),
+    }
+
+
+@router.get("/{commodity_hs}/{dest_m49}/{origin_m49}/trade-anomalies")
+def get_trade_anomalies(
+    commodity_hs: str,
+    dest_m49: int,
+    origin_m49: int,
+    state: AppState = Depends(get_state),
+):
+    """Section 5 trade flow anomaly metrics."""
+    if state.trade_df is None or state.trade_df.empty:
+        return {"error": "No trade data available"}
+
+    periods = sorted(state.trade_df["period"].unique())
+    if not periods:
+        return {"error": "No periods in trade data"}
+    period = int(periods[-1])
+
+    uv_df = compute_unit_value_anomalies(
+        state.trade_df, commodity_hs, dest_m49, period
+    )
+    z_uv = float("nan")
+    unit_value = float("nan")
+    peers = []
+    if not uv_df.empty:
+        row = uv_df[uv_df["partnerCode"].astype(int) == origin_m49]
+        if not row.empty:
+            z_uv = float(row.iloc[0]["z_uv"])
+            unit_value = float(row.iloc[0]["unit_value"])
+        peers = [
+            {"partnerCode": int(r["partnerCode"]), "unit_value": float(r["unit_value"]), "z_uv": float(r["z_uv"])}
+            for _, r in uv_df.iterrows()
+        ]
+
+    mtd = compute_mirror_discrepancy(
+        state.trade_df, commodity_hs, dest_m49, origin_m49, period
+    )
+
+    delta_hhi = None
+    if len(periods) >= 2:
+        shifts = compute_concentration_shifts(
+            state.trade_df, commodity_hs, dest_m49,
+            int(periods[-1]), int(periods[-2]),
+        )
+        delta_hhi = shifts.get("delta_hhi")
+
+    return {
+        "unit_value": unit_value,
+        "z_uv": z_uv,
+        "mtd": mtd,
+        "delta_hhi": delta_hhi,
+        "peer_unit_values": peers,
+    }
 
 
 @router.get("/{commodity_hs}/{dest_m49}/{origin_m49}/hazard")

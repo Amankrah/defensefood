@@ -5,6 +5,7 @@ Provides singleton access to data and pipeline results
 that are loaded once at startup and shared across requests.
 """
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -16,6 +17,8 @@ from defensefood.ingestion.comtrade import load_merged_trade_data
 from defensefood.ingestion.rasff import Corridor, RasffSummary, extract_corridors, load_rasff_data
 from defensefood.models.scores import ScoringConfig
 from defensefood.pipeline.hazard_pipeline import build_notifications, compute_corridor_hazard
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -49,6 +52,10 @@ def _load_data(state: AppState) -> None:
     try:
         state.trade_df = load_merged_trade_data()
     except FileNotFoundError:
+        logger.warning(
+            "Merged trade file not found; API will serve empty trade data. "
+            "Run ingestion or place merged Comtrade output where load_merged_trade_data expects it."
+        )
         state.trade_df = pd.DataFrame()
 
     # Load RASFF data and run hazard pipeline
@@ -82,7 +89,9 @@ def _load_data(state: AppState) -> None:
             state.corridor_metrics.append(metrics)
 
     except FileNotFoundError:
-        pass
+        logger.warning(
+            "RASFF data file not found; corridor metrics and hazard summaries will be empty."
+        )
 
 
 def reload_data() -> AppState:
