@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/defensefood_core"]
+resolver = "2"

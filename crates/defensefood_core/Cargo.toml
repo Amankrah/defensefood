@@ -1,0 +1,20 @@
+[package]
+name = "defensefood_core"
+version = "0.1.0"
+edition = "2021"
+description = "Rust computation engine for EU Food Fraud Vulnerability Intelligence System"
+
+[lib]
+name = "defensefood_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+numpy = "0.23"
+ndarray = "0.16"
+petgraph = "0.6"
+ordered-float = "4.0"
+thiserror = "2.0"
+
+[dev-dependencies]
+approx = "0.5"
