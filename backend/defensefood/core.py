@@ -133,25 +133,45 @@ RISK_DECISION_MAP = {
 }
 
 HAZARD_TYPE_MAP = {
+    # Biological agents
     "biological": HazardType.Biological,
     "pathogenic micro-organisms": HazardType.Biological,
+    "non-pathogenic micro-organisms": HazardType.Biological,
     "parasitic infestation": HazardType.Biological,
+    "biocontaminants": HazardType.Biological,
+    # Chemistry -- pesticides
     "pesticide residues": HazardType.ChemPesticides,
+    "industrial contaminants": HazardType.ChemPesticides,
+    # Chemistry -- heavy metals
     "heavy metals": HazardType.ChemHeavyMetals,
+    "metals": HazardType.ChemHeavyMetals,
+    # Chemistry -- mycotoxins / natural toxins
     "mycotoxins": HazardType.ChemMycotoxins,
+    "natural toxins": HazardType.ChemMycotoxins,
+    "natural toxins (other)": HazardType.ChemMycotoxins,
+    # Chemistry -- other
     "chemical contamination": HazardType.ChemOther,
     "food additives and flavourings": HazardType.ChemOther,
     "migration": HazardType.ChemOther,
-    "composition": HazardType.Regulatory,
-    "labelling absent/incomplete/incorrect": HazardType.Regulatory,
-    "adulteration/fraud": HazardType.Regulatory,
     "foreign bodies": HazardType.ChemOther,
     "allergens": HazardType.ChemOther,
-    "novel food": HazardType.Regulatory,
-    "non-pathogenic micro-organisms": HazardType.Biological,
-    "gmo / novel food": HazardType.Regulatory,
+    "residues of veterinary medicinal products": HazardType.ChemOther,
+    "veterinary medicinal products": HazardType.ChemOther,
     "radiation": HazardType.ChemOther,
     "other hazard": HazardType.ChemOther,
+    "process contaminants": HazardType.ChemOther,
+    "polycyclic aromatic hydrocarbons": HazardType.ChemOther,
+    # Regulatory / labelling / composition
+    "composition": HazardType.Regulatory,
+    "labelling absent/incomplete/incorrect": HazardType.Regulatory,
+    "labelling": HazardType.Regulatory,
+    "adulteration/fraud": HazardType.Regulatory,
+    "adulteration": HazardType.Regulatory,
+    "novel food": HazardType.Regulatory,
+    "gmo / novel food": HazardType.Regulatory,
+    "gmo": HazardType.Regulatory,
+    "tampering": HazardType.Regulatory,
+    "poor or insufficient controls": HazardType.Regulatory,
 }
 
 
@@ -170,14 +190,45 @@ def parse_risk_decision(value: str) -> RiskDecision:
 
 
 def parse_hazard_type(value: str) -> HazardType:
-    """Map RASFF hazard category string to Rust enum."""
-    if not value or pd.isna(value):
+    """Map a single RASFF hazard category token to our 6-way enum.
+
+    The caller should pass ONE category token (e.g. "pathogenic micro-organisms"),
+    not the full raw hazards cell. Unknown tokens fall back to ChemOther.
+    """
+    if not value or (isinstance(value, float) and pd.isna(value)):
         return HazardType.ChemOther
     val_lower = str(value).strip().lower()
+    if not val_lower:
+        return HazardType.ChemOther
+    # Prefer an exact match before substring matching (keys like "gmo" would
+    # otherwise match "gmo / novel food" twice but the result is the same).
+    if val_lower in HAZARD_TYPE_MAP:
+        return HAZARD_TYPE_MAP[val_lower]
     for key, ht in HAZARD_TYPE_MAP.items():
         if key in val_lower:
             return ht
     return HazardType.ChemOther
+
+
+def parse_hazard_types(value: str) -> list[HazardType]:
+    """Map a comma-separated RASFF hazards string to a list of category enums.
+
+    RASFF often lists multiple hazards per notification, e.g.
+    "Aflatoxin B1 - {mycotoxins},aflatoxin total - {mycotoxins},Salmonella - {pathogenic micro-organisms}".
+    After `_extract_hazard_categories` strips the {braces}, we receive something
+    like "mycotoxins,mycotoxins,pathogenic micro-organisms". Each token is
+    mapped independently so HDI (Shannon entropy) reflects the true diversity.
+    Returns [] when no usable tokens are found.
+    """
+    if not value or (isinstance(value, float) and pd.isna(value)):
+        return []
+    out: list[HazardType] = []
+    for token in str(value).split(","):
+        token = token.strip()
+        if not token:
+            continue
+        out.append(parse_hazard_type(token))
+    return out
 
 
 class HazardEngine:

@@ -55,8 +55,16 @@ export default function DataTable<T extends Record<string, any>>({
     return [...filtered].sort((a, b) => {
       const av = a[sortKey];
       const bv = b[sortKey];
-      if (col?.type === "number")
-        return ((av as number) - (bv as number)) * dir;
+      if (col?.type === "number") {
+        const an =
+          typeof av === "number" && !Number.isNaN(av) ? av : null;
+        const bn =
+          typeof bv === "number" && !Number.isNaN(bv) ? bv : null;
+        if (an === null && bn === null) return 0;
+        if (an === null) return 1;
+        if (bn === null) return -1;
+        return (an - bn) * dir;
+      }
       return String(av ?? "").localeCompare(String(bv ?? "")) * dir;
     });
   }, [filtered, sortKey, sortDir, columns]);

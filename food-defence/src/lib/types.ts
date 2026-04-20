@@ -1,5 +1,18 @@
 // ── Corridor Metrics (from /corridors endpoints) ──
 
+export type RasffRole = "notifier" | "distribution" | "followUp" | "attention";
+
+/** The six hazard taxonomy buckets we aggregate RASFF categories into. */
+export type HazardBucket =
+  | "biological"
+  | "chem_pesticides"
+  | "chem_heavy_metals"
+  | "chem_mycotoxins"
+  | "chem_other"
+  | "regulatory";
+
+export type HazardBreakdown = Partial<Record<HazardBucket, number>>;
+
 export interface CorridorMetric {
   commodity_hs: string;
   commodity_name: string;
@@ -11,10 +24,23 @@ export interface CorridorMetric {
   hdi: number;
   notification_count: number;
   severity_total: number;
-  cvs?: number;
-  sci_norm?: number;
-  his_norm?: number;
-  crs_norm?: number;
+  /** Per-category weighted counts used for HDI. */
+  hazard_breakdown?: HazardBreakdown;
+  /** Distinct RASFF roles that flagged this destination across notifications. */
+  destination_roles?: RasffRole[];
+  /** How many notifications flagged each role. */
+  role_counts?: Partial<Record<RasffRole, number>>;
+  /** True if destination has any active role (notifier/distribution/followUp). */
+  is_active_destination?: boolean;
+  /** Combined vulnerability score. null when structural inputs are missing. */
+  cvs?: number | null;
+  /** Hazard-only CVS fallback when structural data is unavailable. */
+  cvs_hazard_only?: number | null;
+  /** Which normalised inputs are missing (e.g. ["sci_norm", "crs_norm"]). */
+  cvs_missing_inputs?: string[];
+  sci_norm?: number | null;
+  his_norm?: number | null;
+  crs_norm?: number | null;
 }
 
 // ── Section 2: Dependency ──
@@ -39,6 +65,7 @@ export interface HazardMetrics {
   notification_count: number;
   severity_total: number;
   dgi?: number;
+  hazard_breakdown?: HazardBreakdown;
 }
 
 // ── Section 5: Trade Flow ──
@@ -62,13 +89,18 @@ export interface CorridorProfile {
   destination_country: string;
   origin_m49: number;
   origin_country: string;
+  destination_roles?: RasffRole[];
+  role_counts?: Partial<Record<RasffRole, number>>;
+  is_active_destination?: boolean;
   dependency?: DependencyMetrics;
   hazard?: HazardMetrics;
   trade_flow?: TradeFlowMetrics;
-  cvs?: number;
-  sci_norm?: number;
-  his_norm?: number;
-  crs_norm?: number;
+  cvs?: number | null;
+  cvs_hazard_only?: number | null;
+  cvs_missing_inputs?: string[];
+  sci_norm?: number | null;
+  his_norm?: number | null;
+  crs_norm?: number | null;
 }
 
 // ── Network Graph ──
@@ -155,6 +187,7 @@ export interface ScoringResult {
 export interface RasffSummary {
   total_notifications: number;
   total_corridors: number;
+  active_corridors?: number;
   unique_origins: number;
   unique_destinations: number;
   unique_commodities: number;
@@ -162,6 +195,10 @@ export interface RasffSummary {
   current_period: number;
   unmapped_origins: string[];
   unmapped_destinations: string[];
+  notifications_without_origin?: number;
+  notifications_without_destination?: number;
+  self_trade_pairs_skipped?: number;
+  role_counts?: Record<RasffRole, number>;
 }
 
 // ── Origin Risk ──

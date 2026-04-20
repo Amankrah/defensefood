@@ -68,6 +68,30 @@ def _load_data(state: AppState) -> None:
         periods = [n.period for n in state.notifications if n.period > 0]
         state.current_period = max(periods) if periods else 202600
 
+        # Build reference -> hazard category string map so HDI can count
+        # every category a notification lists (not just the first).
+        from defensefood.ingestion.rasff import _extract_hazard_categories
+        hazard_category_map: dict[str, str] = {}
+        for c in state.corridors:
+            if c.reference and c.reference not in hazard_category_map:
+                hazard_category_map[c.reference] = c.hazard_category
+
+        # Aggregate destination roles per corridor across notifications
+        from defensefood.ingestion.rasff import ACTIVE_ROLES
+        roles_by_corridor: dict[tuple[str, int, int], set[str]] = {}
+        role_counts_by_corridor: dict[tuple[str, int, int], dict[str, int]] = {}
+        for c in state.corridors:
+            key = (c.commodity_hs, c.destination_m49, c.origin_m49)
+            if key not in roles_by_corridor:
+                roles_by_corridor[key] = set()
+                role_counts_by_corridor[key] = {
+                    "notifier": 0, "distribution": 0,
+                    "followUp": 0, "attention": 0,
+                }
+            for r in c.destination_roles:
+                roles_by_corridor[key].add(r)
+                role_counts_by_corridor[key][r] += 1
+
         # Compute hazard metrics for each unique corridor
         seen = set()
         for c in state.corridors:
@@ -79,6 +103,7 @@ def _load_data(state: AppState) -> None:
             metrics = compute_corridor_hazard(
                 state.notifications, c.commodity_hs, c.destination_m49,
                 c.origin_m49, state.current_period,
+                hazard_category_map=hazard_category_map,
             )
             metrics["commodity_hs"] = c.commodity_hs
             metrics["commodity_name"] = c.commodity_name
@@ -86,6 +111,12 @@ def _load_data(state: AppState) -> None:
             metrics["destination_country"] = c.destination_country
             metrics["origin_m49"] = c.origin_m49
             metrics["origin_country"] = c.origin_country
+
+            roles = roles_by_corridor.get(key, set())
+            metrics["destination_roles"] = sorted(roles)
+            metrics["role_counts"] = role_counts_by_corridor.get(key, {})
+            metrics["is_active_destination"] = bool(roles & ACTIVE_ROLES)
+
             state.corridor_metrics.append(metrics)
 
     except FileNotFoundError:

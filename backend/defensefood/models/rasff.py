@@ -52,3 +52,6 @@ class RasffIngestionSummary(BaseModel):
     unique_commodities: int
     unmapped_origins: list[str] = []
     unmapped_destinations: list[str] = []
+    notifications_without_origin: int = 0
+    notifications_without_destination: int = 0
+    self_trade_pairs_skipped: int = 0

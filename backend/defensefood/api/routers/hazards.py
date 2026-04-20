@@ -16,11 +16,16 @@ def get_rasff_summary(state: AppState = Depends(get_state)):
     return {
         "total_notifications": s.total_notifications,
         "total_corridors": s.total_corridors,
+        "active_corridors": s.active_corridors,
         "unique_origins": s.unique_origins,
         "unique_destinations": s.unique_destinations,
         "unique_commodities": s.unique_commodities,
         "unmapped_origins": s.unmapped_origins,
         "unmapped_destinations": s.unmapped_destinations,
+        "notifications_without_origin": s.notifications_without_origin,
+        "notifications_without_destination": s.notifications_without_destination,
+        "self_trade_pairs_skipped": s.self_trade_pairs_skipped,
+        "role_counts": s.role_counts,
         "notification_objects_built": len(state.notifications),
         "current_period": state.current_period,
     }

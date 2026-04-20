@@ -12,7 +12,13 @@ from typing import Optional
 import pandas as pd
 
 from defensefood_core import RasffNotification
-from defensefood.core import HazardEngine, parse_classification, parse_hazard_type, parse_risk_decision
+from defensefood.core import (
+    HazardEngine,
+    parse_classification,
+    parse_hazard_type,
+    parse_hazard_types,
+    parse_risk_decision,
+)
 from defensefood.ingestion.countries import get_m49_code
 from defensefood.ingestion.rasff import Corridor, extract_corridors, load_rasff_data
 
@@ -22,13 +28,18 @@ def build_notifications(
 ) -> list[RasffNotification]:
     """Convert extracted corridors to Rust RasffNotification objects.
 
-    Groups by reference to avoid duplicating affected_countries.
+    The Rust struct stores a single origin per notification, so a notification
+    that lists multiple origins (e.g. "France,Ireland,Netherlands") emits one
+    RasffNotification per origin, each carrying the full set of affected
+    destinations for that reference.
+
+    Grouping key: (reference, origin_m49).
     """
-    # Group corridors by reference to build one notification per reference
-    by_ref: dict[str, dict] = {}
+    by_ref_origin: dict[tuple[str, int], dict] = {}
     for c in corridors:
-        if c.reference not in by_ref:
-            by_ref[c.reference] = {
+        key = (c.reference, c.origin_m49)
+        if key not in by_ref_origin:
+            by_ref_origin[key] = {
                 "reference": c.reference,
                 "commodity_hs": c.commodity_hs,
                 "origin_m49": c.origin_m49,
@@ -38,10 +49,10 @@ def build_notifications(
                 "hazard_category": c.hazard_category,
                 "period": c.period,
             }
-        by_ref[c.reference]["affected_countries"].add(c.destination_m49)
+        by_ref_origin[key]["affected_countries"].add(c.destination_m49)
 
     notifications = []
-    for data in by_ref.values():
+    for data in by_ref_origin.values():
         if not data["commodity_hs"] or not data["affected_countries"] or data["period"] == 0:
             continue
         notif = RasffNotification(
@@ -66,10 +77,18 @@ def compute_corridor_hazard(
     origin_m49: int,
     current_period: int,
     alpha: float = 0.90,
+    hazard_category_map: Optional[dict[str, str]] = None,
 ) -> dict:
     """Compute all Section 4 hazard metrics for a single corridor.
 
-    Returns dict with keys: his, hdi, dgi, notification_count, severity_total.
+    Returns dict with keys: his, hdi, notification_count, severity_total,
+    hazard_breakdown (per-category counts used for HDI).
+
+    `hazard_category_map` is an optional {reference -> raw-hazards-string}
+    mapping so HDI can include every category token on a notification, not
+    just the single `hazard_type` enum the Rust struct can hold. When a
+    notification lists "mycotoxins,pathogenic micro-organisms" we want both
+    categories to contribute to the diversity index.
     """
     # HIS -- Hazard Intensity Score (Eq. 15)
     his = HazardEngine.compute_his(
@@ -87,25 +106,33 @@ def compute_corridor_hazard(
     notif_count = len(corridor_notifs)
 
     # HDI -- Hazard Diversity Index (Eq. 17-18)
-    # Map HazardType enum variants to indices 0-5 via string comparison
+    # Slot ordering matches defensefood_core.HazardType discriminants:
+    #   [Biological, ChemPesticides, ChemHeavyMetals, ChemMycotoxins, ChemOther, Regulatory]
     from defensefood_core import HazardType
+
+    def _slot(ht: HazardType) -> int:
+        if ht == HazardType.Biological: return 0
+        if ht == HazardType.ChemPesticides: return 1
+        if ht == HazardType.ChemHeavyMetals: return 2
+        if ht == HazardType.ChemMycotoxins: return 3
+        if ht == HazardType.ChemOther: return 4
+        if ht == HazardType.Regulatory: return 5
+        return 4
+
     hazard_counts = [0.0] * 6
     for n in corridor_notifs:
-        ht = n.hazard_type
-        if ht == HazardType.Biological:
-            hazard_counts[0] += 1.0
-        elif ht == HazardType.ChemPesticides:
-            hazard_counts[1] += 1.0
-        elif ht == HazardType.ChemHeavyMetals:
-            hazard_counts[2] += 1.0
-        elif ht == HazardType.ChemMycotoxins:
-            hazard_counts[3] += 1.0
-        elif ht == HazardType.ChemOther:
-            hazard_counts[4] += 1.0
-        elif ht == HazardType.Regulatory:
-            hazard_counts[5] += 1.0
+        # Prefer the richer multi-category parse when a map is provided.
+        if hazard_category_map is not None and n.reference in hazard_category_map:
+            hts = parse_hazard_types(hazard_category_map[n.reference])
         else:
-            hazard_counts[4] += 1.0
+            hts = [n.hazard_type]
+        if not hts:
+            hts = [n.hazard_type]
+        # Fractional credit so a notification with 2 categories splits 0.5/0.5.
+        share = 1.0 / len(hts)
+        for ht in hts:
+            hazard_counts[_slot(ht)] += share
+
     hdi = HazardEngine.compute_hdi(hazard_counts)
 
     # Severity total for this corridor
@@ -114,11 +141,16 @@ def compute_corridor_hazard(
         for n in corridor_notifs
     )
 
+    labels = ["biological", "chem_pesticides", "chem_heavy_metals",
+              "chem_mycotoxins", "chem_other", "regulatory"]
+    hazard_breakdown = {label: round(count, 3) for label, count in zip(labels, hazard_counts)}
+
     return {
         "his": his,
         "hdi": hdi,
         "notification_count": notif_count,
         "severity_total": severity_total,
+        "hazard_breakdown": hazard_breakdown,
     }
 
 
@@ -174,6 +206,23 @@ def run_hazard_pipeline(
         periods = [n.period for n in notifications if n.period > 0]
         current_period = max(periods) if periods else 202600
 
+    # Aggregate destination roles per corridor key across all notifications
+    from defensefood.ingestion.rasff import ACTIVE_ROLES
+
+    roles_by_corridor: dict[tuple[str, int, int], set[str]] = {}
+    role_counts_by_corridor: dict[tuple[str, int, int], dict[str, int]] = {}
+    for c in corridors:
+        key = (c.commodity_hs, c.destination_m49, c.origin_m49)
+        if key not in roles_by_corridor:
+            roles_by_corridor[key] = set()
+            role_counts_by_corridor[key] = {
+                "notifier": 0, "distribution": 0,
+                "followUp": 0, "attention": 0,
+            }
+        for r in c.destination_roles:
+            roles_by_corridor[key].add(r)
+            role_counts_by_corridor[key][r] += 1
+
     # Compute metrics for each unique corridor
     seen = set()
     corridor_metrics = []
@@ -192,6 +241,12 @@ def run_hazard_pipeline(
         metrics["origin_m49"] = c.origin_m49
         metrics["origin_country"] = c.origin_country
         metrics["destination_country"] = c.destination_country
+
+        roles = roles_by_corridor.get(key, set())
+        metrics["destination_roles"] = sorted(roles)
+        metrics["role_counts"] = role_counts_by_corridor.get(key, {})
+        metrics["is_active_destination"] = bool(roles & ACTIVE_ROLES)
+
         corridor_metrics.append(metrics)
 
     return {

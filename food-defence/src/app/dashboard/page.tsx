@@ -171,11 +171,26 @@ export default function CommandCentre() {
     );
   }
 
-  const flagged = allCorridors.filter((c) => (c.cvs ?? 0) > 0.3).length;
-  const maxCvs = allCorridors.reduce(
-    (max, c) => Math.max(max, c.cvs ?? 0),
-    0
-  );
+  // Fall back to HIS-based thresholds when structural CVS isn't available.
+  const cvsAvailable = allCorridors.some((c) => c.cvs != null);
+  const flagged = cvsAvailable
+    ? allCorridors.filter((c) => (c.cvs ?? 0) > 0.3).length
+    : allCorridors.filter((c) => c.his >= 0.5).length;
+  const maxHeadlineScore = cvsAvailable
+    ? allCorridors.reduce((m, c) => Math.max(m, c.cvs ?? 0), 0)
+    : allCorridors.reduce((m, c) => Math.max(m, c.his), 0);
+  const headlineScoreLabel = cvsAvailable
+    ? "Highest priority score (CVS)"
+    : "Highest hazard intensity (HIS)";
+  const flaggedLabel = cvsAvailable
+    ? "Corridors above review threshold"
+    : "Corridors with hazard intensity \u2265 0.5";
+  const flaggedSubtext = cvsAvailable
+    ? `Priority score (CVS) above 0.3, out of ${allCorridors.length} loaded`
+    : `Hazard signal (HIS) at or above 0.5, out of ${allCorridors.length} loaded`;
+  const headlineScoreSubtext = cvsAvailable
+    ? "Top combined vulnerability (CVS) across all corridors"
+    : "Top hazard intensity. Structural inputs (CVS) not yet connected; ranking by RASFF signal only.";
   const density =
     networkStats.node_count > 0
       ? networkStats.edge_count / (networkStats.node_count * networkStats.node_count)
@@ -198,20 +213,29 @@ export default function CommandCentre() {
         </div>
       </div>
 
+      {!cvsAvailable && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+          <span className="font-semibold">Structural inputs not connected.</span>{" "}
+          Priority score (CVS) combines structural dependency (SCI) and consumption demand (CRS)
+          with hazard signals. Until bilateral import data and consumption statistics are wired in,
+          corridors are ranked by hazard intensity (HIS) alone.
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <MetricCard
-          label="Corridors above review threshold"
+          label={flaggedLabel}
           value={flagged}
           icon={AlertTriangle}
           color="bg-red-500"
-          subtext={`Priority score (CVS) above 0.3, out of ${allCorridors.length} loaded`}
+          subtext={flaggedSubtext}
         />
         <MetricCard
-          label="Highest priority score in data"
-          value={fmt(maxCvs)}
+          label={headlineScoreLabel}
+          value={fmt(maxHeadlineScore)}
           icon={Shield}
           color="bg-orange-500"
-          subtext="Top combined vulnerability (CVS) across all corridors"
+          subtext={headlineScoreSubtext}
         />
         <MetricCard
           label="RASFF alerts in dataset"

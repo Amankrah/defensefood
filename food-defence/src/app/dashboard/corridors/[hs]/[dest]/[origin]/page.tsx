@@ -23,10 +23,80 @@ import {
 import { api } from "@/lib/api";
 import type { CorridorProfile, TradeFlowMetrics } from "@/lib/types";
 import { fmt, fmtPct } from "@/lib/utils";
+import type { HazardBreakdown } from "@/lib/types";
 import MetricCard from "@/components/shared/MetricCard";
 import GaugeChart from "@/components/shared/GaugeChart";
 import RadarChart from "@/components/shared/RadarChart";
 import ScoreBar from "@/components/shared/ScoreBar";
+import { RolePills } from "@/components/shared/RolePill";
+
+/** Inline component: 6-category bar showing which hazard families dominate a corridor. */
+const HAZARD_CATS: {
+  key: keyof HazardBreakdown;
+  label: string;
+  color: string;
+}[] = [
+  { key: "biological", label: "Biological", color: "#10b981" },
+  { key: "chem_pesticides", label: "Pesticides", color: "#84cc16" },
+  { key: "chem_heavy_metals", label: "Heavy metals", color: "#f59e0b" },
+  { key: "chem_mycotoxins", label: "Mycotoxins", color: "#f97316" },
+  { key: "chem_other", label: "Other chem.", color: "#ef4444" },
+  { key: "regulatory", label: "Regulatory", color: "#8b5cf6" },
+];
+
+function HazardBreakdownBar({ breakdown }: { breakdown: HazardBreakdown }) {
+  const total = HAZARD_CATS.reduce((s, c) => s + (breakdown[c.key] ?? 0), 0);
+  if (total <= 0) {
+    return (
+      <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3 text-[11px] text-slate-500">
+        No categorised hazards on this corridor yet.
+      </div>
+    );
+  }
+  return (
+    <div className="mt-4">
+      <p className="mb-2 text-xs font-medium text-slate-500">
+        Hazard mix (how {haztotal(total)} categorised alerts split across families)
+      </p>
+      <div className="flex h-6 overflow-hidden rounded-lg bg-slate-100">
+        {HAZARD_CATS.map((c) => {
+          const v = breakdown[c.key] ?? 0;
+          if (v <= 0) return null;
+          const pct = (v / total) * 100;
+          return (
+            <div
+              key={c.key}
+              className="transition"
+              style={{ width: `${pct}%`, backgroundColor: c.color }}
+              title={`${c.label}: ${v.toFixed(2)} alerts (${pct.toFixed(1)}%)`}
+            />
+          );
+        })}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
+        {HAZARD_CATS.map((c) => {
+          const v = breakdown[c.key] ?? 0;
+          if (v <= 0) return null;
+          return (
+            <span key={c.key} className="inline-flex items-center gap-1.5">
+              <span
+                className="h-2.5 w-2.5 rounded-sm"
+                style={{ backgroundColor: c.color }}
+                aria-hidden
+              />
+              <span className="text-slate-600">{c.label}</span>
+              <span className="font-mono text-slate-800">{v.toFixed(2)}</span>
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function haztotal(v: number): string {
+  return v.toFixed(v >= 10 ? 0 : 1);
+}
 
 export default function CorridorDeepDive() {
   const params = useParams();
@@ -112,6 +182,19 @@ export default function CorridorDeepDive() {
             </span>
             {profile.commodity_name}
           </p>
+          {profile.destination_roles && profile.destination_roles.length > 0 && (
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400">
+                Destination role
+              </span>
+              <RolePills roles={profile.destination_roles} />
+              {profile.is_active_destination === false && (
+                <span className="text-[10px] italic text-slate-400">
+                  (passive mention only &mdash; no active response required)
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -170,30 +253,35 @@ export default function CorridorDeepDive() {
           alert activity or weight; they support triage, not automatic enforcement.
         </p>
         {haz ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <MetricCard
-              label="Hazard intensity (HIS)"
-              value={fmt(haz.his)}
-              subtext="Relative strength of hazard signal on this lane versus peers"
-              icon={AlertTriangle}
-              color="bg-red-500"
-            />
-            <MetricCard
-              label="Hazard diversity (HDI)"
-              value={fmt(haz.hdi)}
-              subtext="How varied the hazard types are (many types vs repeated one)"
-            />
-            <MetricCard
-              label="Alert count"
-              value={haz.notification_count}
-              subtext="Number of RASFF notifications linked to this corridor"
-            />
-            <MetricCard
-              label="Cumulative alert weight"
-              value={fmt(haz.severity_total, 2)}
-              subtext="Seriousness of alerts combined (classification and risk level)"
-            />
-          </div>
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <MetricCard
+                label="Hazard intensity (HIS)"
+                value={fmt(haz.his)}
+                subtext="Severity-weighted, time-decayed RASFF signal on this lane"
+                icon={AlertTriangle}
+                color="bg-red-500"
+              />
+              <MetricCard
+                label="Hazard diversity (HDI)"
+                value={fmt(haz.hdi)}
+                subtext="Shannon entropy over 6 categories (0 = single type, 1 = uniform mix)"
+              />
+              <MetricCard
+                label="Alert count"
+                value={haz.notification_count}
+                subtext="Distinct RASFF notifications on this corridor"
+              />
+              <MetricCard
+                label="Cumulative alert weight"
+                value={fmt(haz.severity_total, 2)}
+                subtext="W_class x W_risk summed across every alert"
+              />
+            </div>
+            {haz.hazard_breakdown && (
+              <HazardBreakdownBar breakdown={haz.hazard_breakdown} />
+            )}
+          </>
         ) : (
           <p className="text-sm text-gray-400 italic">No hazard data available.</p>
         )}
@@ -289,6 +377,20 @@ export default function CorridorDeepDive() {
           (CRS) after normalisation. Treat it as a ranking aid; confirm with controls on the
           ground.
         </p>
+
+        {profile.cvs == null && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+            <span className="font-semibold">CVS unavailable for this corridor.</span>{" "}
+            Missing:{" "}
+            <span className="font-mono">
+              {(profile.cvs_missing_inputs ?? ["sci_norm", "crs_norm"]).join(", ")}
+            </span>
+            . Structural inputs (bilateral imports, domestic production, consumption ranking) are
+            not yet connected. The hazard-only view below reflects what we can see from RASFF
+            alone.
+          </div>
+        )}
+
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <div>
             <p className="mb-2 text-xs text-gray-500">Shape of the score (each spoke 0 to 1)</p>
@@ -299,12 +401,22 @@ export default function CorridorDeepDive() {
             </p>
           </div>
           <div>
-            <p className="mb-2 text-xs text-gray-500">How much each factor contributes</p>
+            <p className="mb-2 text-xs text-gray-500">
+              {profile.cvs != null
+                ? "How much each factor contributes"
+                : "Hazard-only signal (structural factors missing)"}
+            </p>
             <div className="mb-4">
               <span className="font-mono text-3xl font-bold text-gray-900">
-                {profile.cvs != null ? fmt(profile.cvs) : "N/A"}
+                {profile.cvs != null
+                  ? fmt(profile.cvs)
+                  : profile.cvs_hazard_only != null
+                    ? fmt(profile.cvs_hazard_only)
+                    : "N/A"}
               </span>
-              <span className="ml-2 text-sm text-gray-400">out of 1.000</span>
+              <span className="ml-2 text-sm text-gray-400">
+                {profile.cvs != null ? "out of 1.000 (CVS)" : "out of 1.000 (HIS percentile)"}
+              </span>
             </div>
             <ScoreBar segments={scoreSegments} total={1} />
           </div>

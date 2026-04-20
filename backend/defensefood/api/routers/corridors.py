@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from defensefood.api.dependencies import AppState, get_state
-from defensefood.ingestion.countries import get_country_name
+from defensefood.ingestion.countries import EU27_M49, get_country_name
 from defensefood.pipeline.dependency_pipeline import compute_corridor_dependency
 from defensefood.pipeline.trade_flow_pipeline import (
     compute_concentration_shifts,
@@ -22,6 +22,44 @@ def list_corridors(
     origin: Optional[int] = Query(None, description="Filter by origin M49"),
     destination: Optional[int] = Query(None, description="Filter by destination M49"),
     min_his: Optional[float] = Query(None, description="Minimum HIS threshold"),
+    active_only: bool = Query(
+        False,
+        description=(
+            "If true, exclude corridors whose destination was only flagged "
+            "for_attention (no follow-up, distribution, or notifier role)."
+        ),
+    ),
+    role: Optional[str] = Query(
+        None,
+        description="Filter to corridors with this role: notifier, distribution, followUp, attention",
+    ),
+    min_notification_count: Optional[int] = Query(
+        None,
+        ge=0,
+        description="Minimum RASFF notification count on the lane",
+    ),
+    min_hdi: Optional[float] = Query(
+        None,
+        description="Minimum hazard diversity index (HDI)",
+    ),
+    min_cvs: Optional[float] = Query(
+        None,
+        ge=0,
+        le=1,
+        description="Minimum combined vulnerability score (lanes without CVS excluded)",
+    ),
+    has_cvs: Optional[bool] = Query(
+        None,
+        description="If true, only lanes with a CVS; if false, only lanes without CVS",
+    ),
+    origin_eu: Optional[bool] = Query(
+        None,
+        description="If true, EU27 origin only; if false, non-EU origin only",
+    ),
+    dest_eu: Optional[bool] = Query(
+        None,
+        description="If true, EU27 destination only; if false, non-EU destination only",
+    ),
     limit: int = Query(100, ge=1, le=1000),
     state: AppState = Depends(get_state),
 ):
@@ -36,6 +74,34 @@ def list_corridors(
         results = [c for c in results if c.get("destination_m49") == destination]
     if min_his is not None:
         results = [c for c in results if c.get("his", 0) >= min_his]
+    if active_only:
+        results = [c for c in results if c.get("is_active_destination", False)]
+    if role:
+        results = [c for c in results if role in (c.get("destination_roles") or [])]
+    if min_notification_count is not None:
+        results = [
+            c for c in results if c.get("notification_count", 0) >= min_notification_count
+        ]
+    if min_hdi is not None:
+        results = [c for c in results if c.get("hdi", 0) >= min_hdi]
+    if min_cvs is not None:
+        results = [
+            c
+            for c in results
+            if c.get("cvs") is not None and float(c["cvs"]) >= min_cvs
+        ]
+    if has_cvs is True:
+        results = [c for c in results if c.get("cvs") is not None]
+    elif has_cvs is False:
+        results = [c for c in results if c.get("cvs") is None]
+    if origin_eu is True:
+        results = [c for c in results if c.get("origin_m49") in EU27_M49]
+    elif origin_eu is False:
+        results = [c for c in results if c.get("origin_m49") not in EU27_M49]
+    if dest_eu is True:
+        results = [c for c in results if c.get("destination_m49") in EU27_M49]
+    elif dest_eu is False:
+        results = [c for c in results if c.get("destination_m49") not in EU27_M49]
 
     # Sort by HIS descending
     results = sorted(results, key=lambda c: c.get("his", 0), reverse=True)
@@ -112,6 +178,7 @@ def get_corridor_full_profile(
                 "hdi": c.get("hdi", 0),
                 "notification_count": c.get("notification_count", 0),
                 "severity_total": c.get("severity_total", 0),
+                "hazard_breakdown": c.get("hazard_breakdown", {}),
             }
             break
 
@@ -179,10 +246,15 @@ def get_corridor_full_profile(
         "destination_country": base.get("destination_country", ""),
         "origin_m49": origin_m49,
         "origin_country": base.get("origin_country", ""),
+        "destination_roles": base.get("destination_roles", []),
+        "role_counts": base.get("role_counts", {}),
+        "is_active_destination": base.get("is_active_destination", False),
         "dependency": dependency,
         "hazard": hazard,
         "trade_flow": trade_flow,
         "cvs": base.get("cvs"),
+        "cvs_hazard_only": base.get("cvs_hazard_only"),
+        "cvs_missing_inputs": base.get("cvs_missing_inputs", []),
         "sci_norm": base.get("sci_norm"),
         "his_norm": base.get("his_norm"),
         "crs_norm": base.get("crs_norm"),
