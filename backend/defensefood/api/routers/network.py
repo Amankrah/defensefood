@@ -60,6 +60,7 @@ def get_network_graph(
             "commodity_hs": c.get("commodity_hs", ""),
             "his": c.get("his", 0.0),
             "severity_total": c.get("severity_total", 0.0),
+            "bdi": c.get("bdi"),
         })
 
     nodes = list(node_map.values())

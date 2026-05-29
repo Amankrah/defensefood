@@ -14,11 +14,22 @@ import pandas as pd
 
 from defensefood_core import RasffNotification
 from defensefood.ingestion.comtrade import load_merged_trade_data
+from defensefood.ingestion.faostat import FaostatStore, load_faostat_store
+from defensefood.ingestion.hs_codes import normalize_hs
 from defensefood.ingestion.rasff import Corridor, RasffSummary, extract_corridors, load_rasff_data
 from defensefood.models.scores import ScoringConfig
+from defensefood.pipeline.consumption_pipeline import compute_crs_lookup
+from defensefood.pipeline.dependency_pipeline import run_dependency_pipeline
 from defensefood.pipeline.hazard_pipeline import build_notifications, compute_corridor_hazard
 
 logger = logging.getLogger(__name__)
+
+# Dependency / consumption fields copied onto each corridor metric at startup.
+_DEPENDENCY_FIELDS = (
+    "ds_prime", "idr", "ocs", "bdi", "ssr", "hhi", "sci", "sci_norm",
+    "provenance", "idr_gt_1", "bilateral_import_kg", "total_imports_kg",
+    "production_kg",
+)
 
 
 @dataclass
@@ -32,6 +43,8 @@ class AppState:
     corridor_metrics: list[dict] = field(default_factory=list)
     scoring_config: ScoringConfig = field(default_factory=ScoringConfig)
     current_period: int = 0
+    faostat: Optional[FaostatStore] = None
+    trade_period: int = 0
 
 
 _state: Optional[AppState] = None
@@ -119,10 +132,60 @@ def _load_data(state: AppState) -> None:
 
             state.corridor_metrics.append(metrics)
 
+        _enrich_dependency_consumption(state)
+
     except FileNotFoundError:
         logger.warning(
             "RASFF data file not found; corridor metrics and hazard summaries will be empty."
         )
+
+
+def _enrich_dependency_consumption(state: AppState) -> None:
+    """Attach Section 2 (dependency) and Section 3 (CRS) metrics to every corridor.
+
+    Runs once at startup so list/sort endpoints and CVS scoring see SCI/IDR/etc.
+    without per-request recomputation. Uses the latest trade YEAR (not the RASFF
+    YYYYMM period). FAOSTAT supplies P/D when present; otherwise dependency runs
+    in trade-only mode (DS' = M - X) and CRS is simply absent.
+    """
+    state.faostat = load_faostat_store()
+
+    trade_period = 0
+    dep: dict = {}
+    if state.trade_df is not None and not state.trade_df.empty:
+        trade_period = int(sorted(state.trade_df["period"].astype(int).unique())[-1])
+        keys = [
+            (m["commodity_hs"], m["destination_m49"], m["origin_m49"])
+            for m in state.corridor_metrics
+        ]
+        dep = run_dependency_pipeline(state.trade_df, keys, state.faostat, trade_period)
+    state.trade_period = trade_period
+
+    crs_lookup = compute_crs_lookup(state.faostat, trade_period or None)
+
+    enriched = 0
+    for m in state.corridor_metrics:
+        key = (m["commodity_hs"], m["destination_m49"], m["origin_m49"])
+        d = dep.get(key)
+        if d and "error" not in d:
+            for f in _DEPENDENCY_FIELDS:
+                if f in d:
+                    m[f] = d[f]
+            enriched += 1
+        elif d and "error" in d:
+            m["dependency_error"] = d["error"]
+
+        hs_norm = normalize_hs(m["commodity_hs"])
+        crs = crs_lookup.get((hs_norm, m["destination_m49"]))
+        if crs is not None:
+            m["crs"] = crs
+
+    logger.info(
+        "Dependency enrichment: %d/%d corridors got Section 2 metrics (period=%s, faostat=%s); "
+        "%d destinations have CRS",
+        enriched, len(state.corridor_metrics), trade_period,
+        bool(state.faostat and state.faostat.available), len(crs_lookup),
+    )
 
 
 def reload_data() -> AppState:

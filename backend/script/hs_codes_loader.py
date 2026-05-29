@@ -34,24 +34,42 @@ def load_commodities_data() -> pd.DataFrame:
     return df
 
 
+def normalize_hs_code(code) -> Optional[str]:
+    """Canonical zero-padded HS string Comtrade expects.
+
+    The CSV stores codes as integers, so chapters 01-09 lose their leading zero
+    (030731 -> 30731, 090999 -> 90999). Comtrade returns NO data for the stripped
+    form, so we left-pad odd-length codes by one zero to restore it (5->6, 3->4).
+    """
+    if code is None or pd.isna(code):
+        return None
+    s = str(code).strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    if not s.isdigit():
+        return None
+    if len(s) % 2 == 1:
+        s = "0" + s
+    return s
+
+
 def get_unique_hs_codes() -> List[str]:
     """
     Get list of unique HS codes from the commodities CSV.
 
     Returns:
-        List of unique HS code strings
+        List of unique, zero-padded HS code strings (leading zeros preserved so
+        Comtrade returns data for chapters 01-09).
     """
     df = load_commodities_data()
 
-    # Get unique HS codes, drop NaN values, convert to string
     hs_codes = df["hs_code_comtrade"].dropna().unique()
-
-    # Convert to strings and ensure proper formatting
-    # HS codes should be strings to preserve leading zeros
-    hs_codes_list = [str(int(code)) if pd.notna(code) else None for code in hs_codes]
-    hs_codes_list = [code for code in hs_codes_list if code is not None]
-
-    return hs_codes_list
+    seen = []
+    for code in hs_codes:
+        norm = normalize_hs_code(code)
+        if norm is not None and norm not in seen:
+            seen.append(norm)
+    return seen
 
 
 def get_hs_codes_with_names() -> Dict[str, List[str]]:

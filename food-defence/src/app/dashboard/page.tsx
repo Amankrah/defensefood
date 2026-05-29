@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
+  Boxes,
   Network,
   Shield,
   TrendingUp,
@@ -94,6 +95,84 @@ const CORRIDOR_COLS: Column<CorridorMetric>[] = [
   },
 ];
 
+const DEPENDENCY_COLS: Column<CorridorMetric>[] = [
+  {
+    key: "origin_country",
+    label: "Origin",
+    headerDescription: "Supplying country the destination leans on for this commodity.",
+    type: "string",
+    render: (r) => <span className="font-medium text-slate-900">{r.origin_country}</span>,
+  },
+  {
+    key: "destination_country",
+    label: "Destination",
+    headerDescription: "Importing country whose supply depends on this origin.",
+    type: "string",
+  },
+  {
+    key: "commodity_name",
+    label: "Commodity",
+    headerDescription: "Product category (HS code prefix shown).",
+    type: "string",
+    render: (r) => (
+      <span title={r.commodity_name}>
+        <span className="mr-1 text-[10px] text-slate-400">{r.commodity_hs}</span>
+        {truncate(r.commodity_name, 22)}
+      </span>
+    ),
+  },
+  {
+    key: "sci",
+    label: "Criticality (SCI)",
+    headerDescription:
+      "Supply criticality index (0–2): import reliance × origin share × supplier concentration. The headline 'how exposed' number.",
+    type: "number",
+    render: (r) => (
+      <span className={`font-mono font-semibold ${riskColor(r.sci ?? 0, 1.0)}`}>
+        {r.sci != null ? fmt(r.sci) : "-"}
+        {r.sci != null && r.provenance !== "faostat" && (
+          <span className="ml-0.5 text-slate-400" title="Trade-only estimate (no production data yet)" aria-hidden>
+            ≈
+          </span>
+        )}
+      </span>
+    ),
+  },
+  {
+    key: "idr",
+    label: "Import reliance (IDR)",
+    headerDescription:
+      "Imports ÷ apparent domestic supply. >1 means imports exceed apparent supply (re-export hub or no production data).",
+    type: "number",
+    render: (r) => (
+      <span className={`font-mono ${r.idr_gt_1 ? "text-amber-600 font-semibold" : "text-slate-600"}`}>
+        {r.idr != null ? fmt(r.idr) : "-"}
+      </span>
+    ),
+  },
+  {
+    key: "ocs",
+    label: "Origin share (OCS)",
+    headerDescription: "Share of the destination's imports of this commodity that come from this single origin.",
+    type: "number",
+    render: (r) => (
+      <span className="font-mono text-slate-600">{r.ocs != null ? fmt(r.ocs) : "-"}</span>
+    ),
+  },
+  {
+    key: "hhi",
+    label: "Concentration (HHI)",
+    headerDescription:
+      "Supplier concentration (0–1): 1/n for n equal suppliers, 1 for a single supplier. ≥0.25 is highly concentrated.",
+    type: "number",
+    render: (r) => (
+      <span className={`font-mono ${(r.hhi ?? 0) >= 0.25 ? "text-orange-600" : "text-slate-600"}`}>
+        {r.hhi != null ? fmt(r.hhi) : "-"}
+      </span>
+    ),
+  },
+];
+
 export default function CommandCentre() {
   const router = useRouter();
   const [summary, setSummary] = useState<RasffSummary | null>(null);
@@ -105,17 +184,19 @@ export default function CommandCentre() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [topOrigins, setTopOrigins] = useState<OriginRisk[]>([]);
+  const [topDependency, setTopDependency] = useState<CorridorMetric[]>([]);
 
   useEffect(() => {
     async function load() {
       try {
-        const [summ, top, net, cfg, all, origins] = await Promise.all([
+        const [summ, top, net, cfg, all, origins, dep] = await Promise.all([
           api.hazards.summary(),
           api.corridors.top(20, "his"),
           api.network.summary(),
           api.scoring.config(),
           api.corridors.list("limit=1000"),
           api.network.origins(12),
+          api.corridors.top(15, "sci"),
         ]);
         setSummary(summ);
         setCorridors(top.corridors);
@@ -123,6 +204,7 @@ export default function CommandCentre() {
         setScoringConfig(cfg);
         setAllCorridors(all.corridors);
         setTopOrigins(origins.origins);
+        setTopDependency(dep.corridors.filter((c) => c.sci != null));
       } catch (e) {
         setError(e instanceof Error ? e.message : "API connection failed");
       } finally {
@@ -196,6 +278,14 @@ export default function CommandCentre() {
       ? networkStats.edge_count / (networkStats.node_count * networkStats.node_count)
       : 0;
 
+  // ── Commodity dependency (Section 2) story stats ──
+  const depCorridors = allCorridors.filter((c) => c.sci != null);
+  const depCount = depCorridors.length;
+  const concentratedCount = depCorridors.filter((c) => (c.hhi ?? 0) >= 0.25).length;
+  const idrFlaggedCount = depCorridors.filter((c) => c.idr_gt_1).length;
+  const maxSci = depCorridors.reduce((m, c) => Math.max(m, c.sci ?? 0), 0);
+  const anyFaostat = depCorridors.some((c) => c.provenance === "faostat");
+
   return (
     <div className="mx-auto max-w-7xl space-y-8">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -251,6 +341,106 @@ export default function CommandCentre() {
           color="bg-purple-500"
           subtext={`Share of possible country links that exist: ${networkStats.edge_count} active ties among ${networkStats.node_count} countries (higher = busier map)`}
         />
+      </div>
+
+      {/* ── Commodity dependency (Section 2) story ── */}
+      <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm">
+        <div className="mb-1 flex items-center gap-2">
+          <Boxes size={16} className="text-blue-600" aria-hidden />
+          <h2 className="text-sm font-semibold text-slate-900">
+            Commodity dependency — how exposed is supply?
+          </h2>
+        </div>
+        <p className="mb-4 max-w-3xl text-xs leading-relaxed text-slate-600">
+          Hazard tells you which lanes have a troubled track record.{" "}
+          <span className="font-medium text-slate-800">
+            Dependency tells you how exposed you’d be if a lane were disrupted
+          </span>{" "}
+          — how much of a destination’s supply of a commodity rides on a single origin, and how
+          concentrated that sourcing is. A lane can be quiet but single-sourced (a hidden
+          chokepoint), or noisy but easily replaced. The priority score (CVS) peaks when a lane is{" "}
+          <span className="font-medium text-slate-800">both</span> high-dependency and high-hazard.
+        </p>
+
+        {depCount === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500">
+            Dependency metrics need bilateral trade data, none of which is loaded yet. Run the
+            all-partners Comtrade fetch and restart the API to populate SCI/IDR/OCS/HHI here.
+          </div>
+        ) : (
+          <>
+            <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <MetricCard
+                label="Lanes with a dependency profile"
+                value={depCount}
+                icon={Boxes}
+                color="bg-blue-500"
+                subtext={`of ${allCorridors.length} corridors; the rest await trade data`}
+              />
+              <MetricCard
+                label="Highly concentrated sourcing"
+                value={concentratedCount}
+                icon={Network}
+                color="bg-orange-500"
+                subtext="HHI ≥ 0.25 — few suppliers, little fallback if one fails"
+              />
+              <MetricCard
+                label="Imports exceed supply (IDR > 1)"
+                value={idrFlaggedCount}
+                icon={AlertTriangle}
+                color="bg-amber-500"
+                subtext="Re-export / trade-hub lanes, or production data still missing"
+              />
+              <MetricCard
+                label="Most critical lane (max SCI)"
+                value={fmt(maxSci)}
+                icon={Shield}
+                color="bg-red-500"
+                subtext="Supply criticality index, scale 0–2"
+              />
+            </div>
+
+            <div className="mb-4 grid gap-1.5 rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2.5 text-[11px] leading-relaxed text-slate-600 sm:grid-cols-2">
+              <p>
+                <span className="font-semibold text-slate-800">IDR</span> — import reliance: imports
+                as a share of apparent supply (&gt;1 = imports exceed it).
+              </p>
+              <p>
+                <span className="font-semibold text-slate-800">OCS</span> — origin share: how much
+                of imports come from this one origin.
+              </p>
+              <p>
+                <span className="font-semibold text-slate-800">HHI</span> — supplier concentration:
+                0 spread across many, 1 a single supplier.
+              </p>
+              <p>
+                <span className="font-semibold text-slate-800">SCI</span> — criticality: the
+                composite of the three (0–2); the headline exposure number.
+              </p>
+            </div>
+
+            <h3 className="mb-1 text-xs font-semibold text-slate-800">
+              Most critical supply dependencies
+            </h3>
+            <p className="mb-3 text-[11px] text-slate-500">
+              Ranked by SCI across all corridors.{" "}
+              {anyFaostat
+                ? ""
+                : "All currently trade-only estimates (≈) — DS′ = imports − exports until FAOSTAT production lands. "}
+              Click a lane for the full breakdown.
+            </p>
+            <DataTable
+              columns={DEPENDENCY_COLS}
+              data={topDependency}
+              onRowClick={(c) =>
+                router.push(
+                  `/dashboard/corridors/${c.commodity_hs}/${c.destination_m49}/${c.origin_m49}`
+                )
+              }
+              pageSize={10}
+            />
+          </>
+        )}
       </div>
 
       {topOrigins.length > 0 && (

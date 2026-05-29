@@ -13,6 +13,12 @@ export type HazardBucket =
 
 export type HazardBreakdown = Partial<Record<HazardBucket, number>>;
 
+/** Where DS'/SSR came from: trade-only proxy (DS' = M - X) vs FAOSTAT balance sheet. */
+export type Provenance = "trade_only" | "faostat";
+
+/** How CVS was composed: full SCI·CRS·HIS vs the relaxed SCI+HIS base. */
+export type CvsMode = "sci_crs_his" | "sci_his" | null;
+
 export interface CorridorMetric {
   commodity_hs: string;
   commodity_name: string;
@@ -32,11 +38,30 @@ export interface CorridorMetric {
   role_counts?: Partial<Record<RasffRole, number>>;
   /** True if destination has any active role (notifier/distribution/followUp). */
   is_active_destination?: boolean;
+  // ── Section 2 dependency (attached at startup; null/absent when no trade) ──
+  sci?: number | null;
+  idr?: number | null;
+  ocs?: number | null;
+  bdi?: number | null;
+  hhi?: number | null;
+  ssr?: number | null;
+  ds_prime?: number | null;
+  /** True when imports exceed apparent domestic supply (re-export / data-artefact flag). */
+  idr_gt_1?: boolean;
+  /** Whether dependency used FAOSTAT production or the trade-only DS' proxy. */
+  provenance?: Provenance;
+  bilateral_import_kg?: number | null;
+  total_imports_kg?: number | null;
+  production_kg?: number | null;
+  /** Section 3 consumption rank (present only when FAOSTAT FBS is loaded). */
+  crs?: number | null;
   /** Combined vulnerability score. null when structural inputs are missing. */
   cvs?: number | null;
+  /** Which inputs the CVS was built from. */
+  cvs_mode?: CvsMode;
   /** Hazard-only CVS fallback when structural data is unavailable. */
   cvs_hazard_only?: number | null;
-  /** Which normalised inputs are missing (e.g. ["sci_norm", "crs_norm"]). */
+  /** Which normalised inputs are missing (e.g. ["crs_norm"]). */
   cvs_missing_inputs?: string[];
   sci_norm?: number | null;
   his_norm?: number | null;
@@ -54,6 +79,13 @@ export interface DependencyMetrics {
   ssr: number;
   sci: number;
   sci_norm: number;
+  /** "faostat" when production was available, else "trade_only" (DS' = M - X). */
+  provenance?: Provenance;
+  /** True when IDR > 1 (imports exceed apparent domestic supply). */
+  idr_gt_1?: boolean;
+  production_kg?: number;
+  total_imports_kg?: number;
+  bilateral_import_kg?: number;
   error?: string;
 }
 
@@ -96,6 +128,7 @@ export interface CorridorProfile {
   hazard?: HazardMetrics;
   trade_flow?: TradeFlowMetrics;
   cvs?: number | null;
+  cvs_mode?: CvsMode;
   cvs_hazard_only?: number | null;
   cvs_missing_inputs?: string[];
   sci_norm?: number | null;
@@ -119,6 +152,8 @@ export interface GraphEdge {
   commodity_hs: string;
   his: number;
   severity_total: number;
+  /** Bilateral Dependency Index (Section 2); null for corridors without trade. */
+  bdi?: number | null;
 }
 
 export interface NetworkGraph {

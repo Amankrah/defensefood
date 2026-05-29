@@ -118,13 +118,47 @@ def fetch_bilateral_trade(
     return pd.concat(all_dfs, ignore_index=True)
 
 
+def _output_dir() -> Path:
+    return Path(__file__).resolve().parent.parent.parent / "script" / "output"
+
+
+def _newest(paths: list[Path]) -> Optional[Path]:
+    return max(paths, key=lambda p: p.stat().st_mtime) if paths else None
+
+
 def load_merged_trade_data(path: Optional[Path] = None) -> pd.DataFrame:
-    """Load the pre-merged trade CSV from the output directory."""
-    if path is None:
-        path = (
-            Path(__file__).resolve().parent.parent.parent
-            / "script" / "output" / "merged_trade_data.csv"
-        )
-    if not path.exists():
-        raise FileNotFoundError(f"Merged trade CSV not found: {path}")
-    return pd.read_csv(path)
+    """Load the trade CSV used for dependency / trade-flow metrics.
+
+    Preference order (newest within each tier):
+      1. explicit ``path`` if given
+      2. ``merged_trade_data.csv`` (canonical, from ``script/merge_output_csv.py``)
+      3. ``comtrade_all_partners_*.csv`` (full partner breakdown -> correct OCS/HHI)
+      4. ``rasff_trade_all_pairs_*.csv`` (curated RASFF pairs -- biased OCS/HHI)
+
+    The all-partners file is preferred over the curated pairs because it gives
+    each reporter's complete import-partner set, which the Section 2 OCS/HHI
+    denominators require. Note: do NOT merge both tiers into one file (e.g. via
+    merge_output_csv.py) or partner rows will double-count.
+    """
+    if path is not None:
+        if not path.exists():
+            raise FileNotFoundError(f"Merged trade CSV not found: {path}")
+        return pd.read_csv(path)
+
+    out = _output_dir()
+    merged = out / "merged_trade_data.csv"
+    if merged.exists():
+        return pd.read_csv(merged)
+
+    all_partners = _newest(list(out.glob("comtrade_all_partners_*.csv")))
+    if all_partners is not None:
+        return pd.read_csv(all_partners)
+
+    all_pairs = _newest(list(out.glob("rasff_trade_all_pairs_*.csv")))
+    if all_pairs is not None:
+        return pd.read_csv(all_pairs)
+
+    raise FileNotFoundError(
+        f"No trade CSV in {out} (looked for merged_trade_data.csv, "
+        "comtrade_all_partners_*.csv, rasff_trade_all_pairs_*.csv)"
+    )

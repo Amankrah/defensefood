@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, Query
 
 from defensefood.api.dependencies import AppState, get_state
 from defensefood.ingestion.countries import EU27_M49, get_country_name
-from defensefood.pipeline.dependency_pipeline import compute_corridor_dependency
 from defensefood.pipeline.trade_flow_pipeline import (
     compute_concentration_shifts,
     compute_mirror_discrepancy,
@@ -42,6 +41,11 @@ def list_corridors(
         None,
         description="Minimum hazard diversity index (HDI)",
     ),
+    min_sci: Optional[float] = Query(
+        None,
+        ge=0,
+        description="Minimum supply criticality index SCI (lanes without dependency data excluded)",
+    ),
     min_cvs: Optional[float] = Query(
         None,
         ge=0,
@@ -59,6 +63,10 @@ def list_corridors(
     dest_eu: Optional[bool] = Query(
         None,
         description="If true, EU27 destination only; if false, non-EU destination only",
+    ),
+    sort_by: str = Query(
+        "his",
+        description="Sort field: his, sci, sci_norm, cvs, bdi, idr, hdi, notification_count, severity_total",
     ),
     limit: int = Query(100, ge=1, le=1000),
     state: AppState = Depends(get_state),
@@ -84,6 +92,12 @@ def list_corridors(
         ]
     if min_hdi is not None:
         results = [c for c in results if c.get("hdi", 0) >= min_hdi]
+    if min_sci is not None:
+        results = [
+            c
+            for c in results
+            if c.get("sci") is not None and float(c["sci"]) >= min_sci
+        ]
     if min_cvs is not None:
         results = [
             c
@@ -103,8 +117,23 @@ def list_corridors(
     elif dest_eu is False:
         results = [c for c in results if c.get("destination_m49") not in EU27_M49]
 
-    # Sort by HIS descending
-    results = sorted(results, key=lambda c: c.get("his", 0), reverse=True)
+    # Sort by the requested field descending; corridors missing the field sink
+    # to the bottom (None treated as -inf) so dependency sorts don't surface
+    # data-less lanes above real ones.
+    valid_sorts = {
+        "his", "sci", "sci_norm", "cvs", "bdi", "idr", "hdi",
+        "notification_count", "severity_total",
+    }
+    sort_key = sort_by if sort_by in valid_sorts else "his"
+
+    def _sort_val(c: dict) -> float:
+        v = c.get(sort_key)
+        try:
+            return float(v) if v is not None else float("-inf")
+        except (TypeError, ValueError):
+            return float("-inf")
+
+    results = sorted(results, key=_sort_val, reverse=True)
 
     return {
         "count": len(results),
@@ -119,7 +148,10 @@ def top_corridors(
     state: AppState = Depends(get_state),
 ):
     """Get top N corridors by vulnerability metric."""
-    valid_sorts = {"his", "severity_total", "notification_count", "hdi", "cvs"}
+    valid_sorts = {
+        "his", "severity_total", "notification_count", "hdi", "cvs",
+        "sci", "sci_norm", "bdi", "idr",
+    }
     if sort_by not in valid_sorts:
         sort_by = "his"
 
@@ -185,17 +217,19 @@ def get_corridor_full_profile(
     if base is None:
         return {"error": "Corridor not found"}
 
-    # Section 2 (dependency) -- compute from trade data
+    # Section 2 (dependency) -- read pre-computed metrics from startup enrichment.
+    # These already use FAOSTAT production (when available) and the reporter-level
+    # HHI, so they're authoritative; no per-request recomputation needed.
     dependency = None
-    if state.trade_df is not None and not state.trade_df.empty:
-        periods = sorted(state.trade_df["period"].unique())
-        if periods:
-            dep_result = compute_corridor_dependency(
-                state.trade_df, commodity_hs, dest_m49, origin_m49,
-                int(periods[-1]),
-            )
-            if "error" not in dep_result:
-                dependency = dep_result
+    _DEP_KEYS = (
+        "ds_prime", "idr", "ocs", "bdi", "ssr", "hhi", "sci", "sci_norm",
+        "provenance", "idr_gt_1", "production_kg", "total_imports_kg",
+        "bilateral_import_kg",
+    )
+    if "idr" in base:
+        dependency = {k: base.get(k) for k in _DEP_KEYS if k in base}
+    elif base.get("dependency_error"):
+        dependency = {"error": base["dependency_error"]}
 
     # Section 5 (trade anomalies) -- compute from trade data
     trade_flow = None
@@ -253,6 +287,7 @@ def get_corridor_full_profile(
         "hazard": hazard,
         "trade_flow": trade_flow,
         "cvs": base.get("cvs"),
+        "cvs_mode": base.get("cvs_mode"),
         "cvs_hazard_only": base.get("cvs_hazard_only"),
         "cvs_missing_inputs": base.get("cvs_missing_inputs", []),
         "sci_norm": base.get("sci_norm"),

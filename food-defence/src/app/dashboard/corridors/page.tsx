@@ -79,6 +79,32 @@ const COLUMNS: Column<CorridorMetric>[] = [
     render: (r) => <RolePills roles={r.destination_roles} />,
   },
   {
+    key: "sci",
+    label: "Dependency (SCI)",
+    headerDescription:
+      "Supply criticality index (Section 2): structural reliance on this origin, amplified by supplier concentration (0–2, higher = more critical). '-' when no trade data for the lane.",
+    type: "number",
+    render: (r) => (
+      <span
+        className={`font-mono ${r.sci != null ? riskColor(r.sci, 1.0) : "text-slate-300"}`}
+        title={
+          r.sci != null
+            ? `${
+                r.provenance === "faostat"
+                  ? "FAOSTAT balance sheet"
+                  : "Trade-only estimate (DS' = M − X)"
+              }${r.idr_gt_1 ? " · IDR>1: imports exceed apparent supply" : ""}`
+            : "No trade data for this corridor"
+        }
+      >
+        {r.sci != null ? fmt(r.sci) : "-"}
+        {r.sci != null && r.provenance !== "faostat" && (
+          <span className="ml-0.5 text-slate-400" aria-hidden>≈</span>
+        )}
+      </span>
+    ),
+  },
+  {
     key: "cvs",
     label: "Priority",
     headerDescription:
@@ -101,10 +127,12 @@ type CorridorFilters = {
   minHis: string;
   minNotifications: string;
   minHdi: string;
+  minSci: string;
   minCvs: string;
   hasCvs: string;
   originEu: string;
   destEu: string;
+  sortBy: string;
 };
 
 const DEFAULT_FILTERS: CorridorFilters = {
@@ -116,11 +144,21 @@ const DEFAULT_FILTERS: CorridorFilters = {
   minHis: "",
   minNotifications: "",
   minHdi: "",
+  minSci: "",
   minCvs: "",
   hasCvs: "",
   originEu: "",
   destEu: "",
+  sortBy: "his",
 };
+
+const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: "his", label: "Hazard (HIS)" },
+  { value: "sci", label: "Dependency (SCI)" },
+  { value: "cvs", label: "Priority (CVS)" },
+  { value: "bdi", label: "Bilateral dependency (BDI)" },
+  { value: "notification_count", label: "Alert count" },
+];
 
 const ROLE_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "Any destination role" },
@@ -151,6 +189,9 @@ function buildListQuery(f: CorridorFilters): string {
     p.set("min_notification_count", String(nmin));
   const hdi = parseFloat(f.minHdi);
   if (f.minHdi.trim() !== "" && !Number.isNaN(hdi)) p.set("min_hdi", String(hdi));
+  const sci = parseFloat(f.minSci);
+  if (f.minSci.trim() !== "" && !Number.isNaN(sci)) p.set("min_sci", String(sci));
+  if (f.sortBy && f.sortBy !== "his") p.set("sort_by", f.sortBy);
   const cvs = parseFloat(f.minCvs);
   if (f.minCvs.trim() !== "" && !Number.isNaN(cvs)) p.set("min_cvs", String(cvs));
   if (f.hasCvs === "yes") p.set("has_cvs", "true");
@@ -208,7 +249,14 @@ function downloadCorridorCsv(rows: CorridorMetric[]) {
     "hdi",
     "notification_count",
     "severity_total",
+    "sci",
+    "idr",
+    "ocs",
+    "hhi",
+    "bdi",
+    "provenance",
     "cvs",
+    "cvs_mode",
     "destination_roles",
   ];
   const lines = [
@@ -223,7 +271,14 @@ function downloadCorridorCsv(rows: CorridorMetric[]) {
         String(r.hdi),
         String(r.notification_count),
         String(r.severity_total),
+        r.sci != null ? String(r.sci) : "",
+        r.idr != null ? String(r.idr) : "",
+        r.ocs != null ? String(r.ocs) : "",
+        r.hhi != null ? String(r.hhi) : "",
+        r.bdi != null ? String(r.bdi) : "",
+        r.provenance ?? "",
         r.cvs != null ? String(r.cvs) : "",
+        r.cvs_mode ?? "",
         (r.destination_roles ?? []).join(";"),
       ]
         .map((x) => escapeCsvCell(String(x)))
@@ -378,8 +433,8 @@ export default function CorridorExplorer() {
       <div>
         <h1 className="text-lg font-bold text-slate-900">Corridor list</h1>
         <p className="text-xs text-slate-600">
-          Explore trade lanes with server-side filters (up to 1000 rows by hazard rank in each
-          request). Hover column titles for score definitions. Open a row for full diagnostics.
+          Explore trade lanes with server-side filters and sort (up to 1000 rows per request).
+          Hover column titles for score definitions. Open a row for full diagnostics.
         </p>
       </div>
 
@@ -559,6 +614,38 @@ export default function CorridorExplorer() {
             />
           </div>
           <div className="flex flex-col gap-1">
+            <label htmlFor="flt-min-sci" className="text-[11px] font-medium text-slate-600">
+              Minimum SCI (dependency)
+            </label>
+            <input
+              id="flt-min-sci"
+              type="number"
+              step="0.05"
+              min={0}
+              placeholder="e.g. 0.5 (excludes lanes w/o trade)"
+              value={filters.minSci}
+              onChange={(e) => setFilters((f) => ({ ...f, minSci: e.target.value }))}
+              className="rounded-lg border border-gray-200 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="flt-sort-by" className="text-[11px] font-medium text-slate-600">
+              Sort by (server-side)
+            </label>
+            <select
+              id="flt-sort-by"
+              value={filters.sortBy}
+              onChange={(e) => setFilters((f) => ({ ...f, sortBy: e.target.value }))}
+              className="rounded-lg border border-gray-200 px-2 py-1.5 text-sm"
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
             <label htmlFor="flt-min-cvs" className="text-[11px] font-medium text-slate-600">
               Minimum CVS
             </label>
@@ -653,7 +740,7 @@ export default function CorridorExplorer() {
                 <>
                   {" "}
                   of <span className="font-mono font-semibold">{matchCount}</span> matching (first
-                  1000 by HIS)
+                  1000 by {SORT_OPTIONS.find((o) => o.value === filters.sortBy)?.label ?? "HIS"})
                 </>
               ) : (
                 <> corridors</>

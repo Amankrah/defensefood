@@ -158,8 +158,10 @@ source backend/.venv/bin/activate
 # 2. Install Python dependencies
 pip install maturin numpy pandas fastapi uvicorn pydantic openpyxl python-dotenv requests
 
-# 3. Build the Rust extension into the venv
+# 3. Build the Rust extension into the venv (from repo root — maturin config is in ./pyproject.toml)
+cd ..
 maturin develop --release
+cd backend
 
 # 4. Verify the Rust module loads
 python -c "import defensefood_core; print(dir(defensefood_core))"
@@ -228,6 +230,7 @@ cargo test
 
 ```bash
 source backend/.venv/bin/activate
+cd "$(git rev-parse --show-toplevel)"   # repo root; maturin reads ./pyproject.toml
 maturin develop --release
 ```
 

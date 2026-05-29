@@ -25,17 +25,21 @@ class CheckpointData:
     failed_pairs: list  # Pairs that failed (for retry)
     total_records: int
     output_file: str
+    # HS codes the run was scoped to, so --resume reuses the same scope without
+    # the caller having to re-pass --rasff-hs. Optional (default None) so older
+    # checkpoints that predate this field still load.
+    hs_codes: Optional[list] = None
 
 
 class CheckpointManager:
     """Manages checkpoint save/load for pipeline progress."""
 
-    def __init__(self, checkpoint_dir: Path = None):
+    def __init__(self, checkpoint_dir: Path = None, checkpoint_name: str = "pipeline_checkpoint.json"):
         if checkpoint_dir is None:
             checkpoint_dir = Path(__file__).parent / "output"
         self.checkpoint_dir = checkpoint_dir
         self.checkpoint_dir.mkdir(exist_ok=True)
-        self.checkpoint_file = self.checkpoint_dir / "pipeline_checkpoint.json"
+        self.checkpoint_file = self.checkpoint_dir / checkpoint_name
 
     def create_checkpoint(
         self,
@@ -43,6 +47,7 @@ class CheckpointManager:
         flow_code: str,
         total_pairs: int,
         output_file: str,
+        hs_codes: Optional[list] = None,
     ) -> CheckpointData:
         """Create a new checkpoint for a fresh run."""
         now = datetime.now().isoformat()
@@ -60,6 +65,7 @@ class CheckpointManager:
             failed_pairs=[],
             total_records=0,
             output_file=output_file,
+            hs_codes=hs_codes,
         )
 
         self._save(checkpoint)

@@ -96,17 +96,19 @@ def run_network_pipeline(
     """
     corridor_metrics = hazard_results.get("corridor_metrics", [])
 
-    # Enrich corridor metrics with placeholder BDI and trade weight
-    # (full BDI requires FAOSTAT production data; use hazard weight as proxy for now)
+    # Prefer the computed Section 2 BDI / bilateral import weight when present
+    # (set during startup enrichment); fall back to the hazard-severity proxy
+    # only for corridors with no trade footprint.
     enriched = []
     for m in corridor_metrics:
+        bdi = m.get("bdi")
         enriched.append({
             "commodity_hs": m.get("commodity_hs", ""),
             "destination_m49": m.get("destination_m49", 0),
             "origin_m49": m.get("origin_m49", 0),
-            "bdi": m.get("severity_total", 0.0),  # Proxy until FAOSTAT available
+            "bdi": bdi if bdi is not None else m.get("severity_total", 0.0),
             "his": m.get("his", 0.0),
-            "bilateral_import_kg": 0.0,
+            "bilateral_import_kg": m.get("bilateral_import_kg", 0.0) or 0.0,
         })
 
     net = build_exposure_network(enriched)

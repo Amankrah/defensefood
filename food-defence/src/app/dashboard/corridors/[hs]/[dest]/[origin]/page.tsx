@@ -199,14 +199,39 @@ export default function CorridorDeepDive() {
       </div>
 
       <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-1 text-sm font-semibold text-gray-900 flex items-center gap-2">
-          <Package size={15} className="text-blue-500" aria-hidden />
-          Supply dependency
-        </h2>
+        <div className="mb-1 flex items-start justify-between gap-2">
+          <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+            <Package size={15} className="text-blue-500" aria-hidden />
+            Supply dependency
+          </h2>
+          {dep && !("error" in dep) && (
+            <span
+              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                dep.provenance === "faostat"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-amber-200 bg-amber-50 text-amber-700"
+              }`}
+              title={
+                dep.provenance === "faostat"
+                  ? "DS' uses FAOSTAT production + food balance sheets"
+                  : "No production data yet — DS' approximated as imports − exports"
+              }
+            >
+              {dep.provenance === "faostat" ? "FAOSTAT balance sheet" : "Trade-only estimate"}
+            </span>
+          )}
+        </div>
         <p className="mb-4 text-xs text-slate-600">
           How much this destination relies on this origin for the commodity, and how concentrated
           sourcing is. Use for lab planning and supplier oversight, not as a verdict on quality.
         </p>
+        {dep && !("error" in dep) && dep.idr_gt_1 && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+            <span className="font-semibold">IDR &gt; 1</span> — imports exceed apparent domestic
+            supply. That points to a re-export / trade-hub lane, or simply the absence of production
+            data in trade-only mode. Read SSR and SCI with that in mind.
+          </div>
+        )}
         {dep && !("error" in dep) ? (
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
             <GaugeChart
@@ -418,6 +443,14 @@ export default function CorridorDeepDive() {
                 {profile.cvs != null ? "out of 1.000 (CVS)" : "out of 1.000 (HIS percentile)"}
               </span>
             </div>
+            {profile.cvs != null && (
+              <p className="mb-3 text-[11px] text-slate-500">
+                Basis:{" "}
+                {profile.cvs_mode === "sci_crs_his"
+                  ? "structural reliance × consumption demand × hazard"
+                  : "structural reliance × hazard (consumption demand pending FAOSTAT)"}
+              </p>
+            )}
             <ScoreBar segments={scoreSegments} total={1} />
           </div>
         </div>

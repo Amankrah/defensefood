@@ -36,14 +36,17 @@ class DependencyEngine:
         bilateral_import_kg: float,
         domestic_supply_kg: Optional[float] = None,
         all_origin_imports: Optional[np.ndarray] = None,
+        delta_stocks_kg: float = 0.0,
     ) -> dict:
         """Compute all Section 2 metrics for a single corridor.
 
         Returns dict with keys: ds_prime, idr, ocs, bdi, ssr, hhi, sci, sci_norm.
         Returns error key if DS' <= 0 (data quality issue).
+
+        `delta_stocks_kg` feeds the full DS' (Eq. 1: DS' = P + M - X + ΔS).
         """
         ds = dependency.compute_supply_balance(
-            production_kg, total_imports_kg, total_exports_kg
+            production_kg, total_imports_kg, total_exports_kg, delta_stocks_kg
         )
         if np.isnan(ds):
             return {"error": "DS' <= 0, data quality issue (flag and exclude)"}

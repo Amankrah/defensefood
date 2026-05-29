@@ -74,10 +74,15 @@ def compute_composite_scores(
 ) -> list[dict]:
     """Compute the final CVS for each corridor.
 
-    If SCI or CRS normalised values are missing, CVS is set to None rather
-    than a misleading zero. HIS-only proxies are exposed separately so the
-    UI can show "hazard-only" corridors without pretending they're ranked
-    on structural grounds.
+    CVS requires a structural base (SCI) and a hazard signal (HIS). Consumption
+    demand (CRS) is used when present but is OPTIONAL: the hybrid base would
+    otherwise be SCI*CRS and collapse to zero everywhere FAOSTAT FBS data is
+    missing. When CRS is absent we fall back to an SCI-only base amplified by
+    HIS, and tag `cvs_mode = "sci_his"` so the UI can distinguish it from the
+    full `"sci_crs_his"` score.
+
+    Corridors lacking SCI or HIS still get `cvs = None` (no fabricated rank);
+    `cvs_hazard_only` exposes the HIS percentile for the hazard-only view.
     """
     if config is None:
         config = ScoringConfig()
@@ -89,41 +94,46 @@ def compute_composite_scores(
         pas_norm = c.get("pas_norm") or 0.0
         sccs_norm = c.get("sccs_norm") or 0.0
 
-        # Hazard-only proxy: a number that is meaningful even without
-        # structural data. Frontend can use this for the hazard tab when CVS
-        # is None.
         c["cvs_hazard_only"] = his_norm if his_norm is not None else None
 
-        # Full CVS requires every structural component we rely on.
-        missing_structural = sci_norm is None or crs_norm is None or his_norm is None
-        if missing_structural:
+        # Core requirement (relaxed): structural reliance + hazard signal.
+        missing_core = sci_norm is None or his_norm is None
+        if missing_core:
             c["cvs"] = None
+            c["cvs_mode"] = None
             c["cvs_missing_inputs"] = [
-                k for k, v in (("sci_norm", sci_norm),
-                               ("crs_norm", crs_norm),
-                               ("his_norm", his_norm))
+                k for k, v in (("sci_norm", sci_norm), ("his_norm", his_norm))
                 if v is None
             ]
             continue
 
+        has_crs = crs_norm is not None
+
         if config.composition_method == CompositionMethod.HYBRID:
-            cvs = ScoringEngine.hybrid(
-                sci_norm, crs_norm, his_norm, pas_norm, sccs_norm,
-                config.w_hazard, config.w_price, config.w_supply_chain,
-            )
+            if has_crs:
+                cvs = ScoringEngine.hybrid(
+                    sci_norm, crs_norm, his_norm, pas_norm, sccs_norm,
+                    config.w_hazard, config.w_price, config.w_supply_chain,
+                )
+            else:
+                # SCI-only base amplified by HIS: SCI*(1 + w_h*HIS)/(1 + w_h).
+                # Reuse the Rust hybrid with crs=1 and price/supply weights zeroed.
+                cvs = ScoringEngine.hybrid(
+                    sci_norm, 1.0, his_norm, 0.0, 0.0,
+                    config.w_hazard, 0.0, 0.0,
+                )
         elif config.composition_method == CompositionMethod.WEIGHTED_LINEAR:
-            vals = [sci_norm, crs_norm, his_norm, pas_norm, sccs_norm]
-            wts = ScoringEngine.equal_weights(len(vals))
-            cvs = ScoringEngine.weighted_linear(vals, wts)
+            vals = [sci_norm, his_norm] + ([crs_norm] if has_crs else [])
+            cvs = ScoringEngine.weighted_linear(vals, ScoringEngine.equal_weights(len(vals)))
         elif config.composition_method == CompositionMethod.GEOMETRIC_MEAN:
-            vals = [sci_norm, crs_norm, his_norm, pas_norm, sccs_norm]
-            wts = ScoringEngine.equal_weights(len(vals))
-            cvs = ScoringEngine.geometric_mean(vals, wts)
+            vals = [sci_norm, his_norm] + ([crs_norm] if has_crs else [])
+            cvs = ScoringEngine.geometric_mean(vals, ScoringEngine.equal_weights(len(vals)))
         else:
             cvs = 0.0
 
         c["cvs"] = cvs
-        c["cvs_missing_inputs"] = []
+        c["cvs_mode"] = "sci_crs_his" if has_crs else "sci_his"
+        c["cvs_missing_inputs"] = [] if has_crs else ["crs_norm"]
 
     return corridors
 
