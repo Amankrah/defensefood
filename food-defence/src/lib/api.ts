@@ -1,4 +1,5 @@
 import type {
+  CohortResponse,
   CorridorMetric,
   CorridorProfile,
   Country,
@@ -6,9 +7,15 @@ import type {
   CountryOrpsByCommodity,
   CountryDetail,
   CountryExposure,
+  CoverageReport,
+  DistributionResponse,
+  LaneTimeSeries,
+  MethodologyEntry,
   NetworkGraph,
   OriginRisk,
   RasffSummary,
+  RawNotification,
+  RawTradeRow,
   ScoringConfig,
   ScoringResult,
   TradeFlowMetrics,
@@ -56,6 +63,18 @@ export const api = {
     tradeAnomalies: (hs: string, dest: number, origin: number) =>
       fetchApi<TradeFlowMetrics>(
         `/corridors/${hs}/${dest}/${origin}/trade-anomalies`
+      ),
+    notifications: (hs: string, dest: number, origin: number) =>
+      fetchApi<{ count: number; notifications: RawNotification[] }>(
+        `/corridors/${hs}/${dest}/${origin}/notifications`
+      ),
+    tradeRows: (hs: string, dest: number, origin: number, period?: number) =>
+      fetchApi<{ count: number; rows: RawTradeRow[] }>(
+        `/corridors/${hs}/${dest}/${origin}/trade-rows${period ? `?period=${period}` : ""}`
+      ),
+    timeSeries: (hs: string, dest: number, origin: number) =>
+      fetchApi<LaneTimeSeries>(
+        `/corridors/${hs}/${dest}/${origin}/time-series`
       ),
   },
 
@@ -120,6 +139,35 @@ export const api = {
     origins: (limit = 20) =>
       fetchApi<{ count: number; origins: OriginRisk[] }>(
         `/network/origins?limit=${limit}`
+      ),
+  },
+
+  research: {
+    coverage: () => fetchApi<CoverageReport>("/research/coverage"),
+    methodology: () =>
+      fetchApi<{ count: number; entries: MethodologyEntry[] }>("/research/methodology"),
+    distribution: (
+      metric: string,
+      opts: {
+        bins?: number;
+        provenance?: "faostat" | "trade_only";
+        originEu?: boolean;
+        destEu?: boolean;
+      } = {}
+    ) => {
+      const params = new URLSearchParams();
+      if (opts.bins != null) params.set("bins", String(opts.bins));
+      if (opts.provenance) params.set("provenance", opts.provenance);
+      if (opts.originEu != null) params.set("origin_eu", String(opts.originEu));
+      if (opts.destEu != null) params.set("dest_eu", String(opts.destEu));
+      const q = params.toString();
+      return fetchApi<DistributionResponse>(
+        `/research/distributions/${metric}${q ? `?${q}` : ""}`
+      );
+    },
+    cohorts: (groupBy: string[], metric = "his", agg = "mean") =>
+      fetchApi<CohortResponse>(
+        `/research/cohorts?group_by=${encodeURIComponent(groupBy.join(","))}&metric=${metric}&agg=${agg}`
       ),
   },
 };

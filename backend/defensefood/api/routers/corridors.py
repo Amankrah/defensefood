@@ -374,3 +374,110 @@ def get_corridor_hazard(
             }
 
     return {"error": "Corridor not found"}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Research-mode raw endpoints — read-only per-lane slices for the workbench.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/{commodity_hs}/{dest_m49}/{origin_m49}/notifications")
+def get_corridor_notifications(
+    commodity_hs: str,
+    dest_m49: int,
+    origin_m49: int,
+    state: AppState = Depends(get_state),
+):
+    """Raw RASFF notifications underlying HIS for this corridor.
+
+    Each row has: reference, period (YYYYMM), classification, risk_decision,
+    hazard_category, destination_roles, severity_weight (W_class × W_risk).
+    Sorted by period descending.
+    """
+    key = (commodity_hs, dest_m49, origin_m49)
+    rows = state.notifications_by_corridor.get(key, [])
+    return {
+        "commodity_hs": commodity_hs,
+        "destination_m49": dest_m49,
+        "origin_m49": origin_m49,
+        "count": len(rows),
+        "notifications": rows,
+    }
+
+
+@router.get("/{commodity_hs}/{dest_m49}/{origin_m49}/trade-rows")
+def get_corridor_trade_rows(
+    commodity_hs: str,
+    dest_m49: int,
+    origin_m49: int,
+    period: Optional[int] = Query(None, description="Restrict to a single trade year"),
+    state: AppState = Depends(get_state),
+):
+    """Raw Comtrade rows for the (commodity, destination, origin) lane.
+
+    Returns both import (M) and export (X) rows reported by the destination
+    where the partner equals this origin. Used by the lane raw view.
+    """
+    if state.trade_df is None or state.trade_df.empty:
+        return {"count": 0, "rows": []}
+
+    df = state.trade_df
+    from defensefood.ingestion.hs_codes import normalize_hs
+    hs = normalize_hs(commodity_hs)
+    mask = (
+        (df["cmdCode"].map(normalize_hs) == hs)
+        & (df["reporterCode"].astype(int) == int(dest_m49))
+        & (df["partnerCode"].astype(int) == int(origin_m49))
+    )
+    if period is not None:
+        mask = mask & (df["period"].astype(int) == int(period))
+    rows = df[mask]
+    return {
+        "commodity_hs": commodity_hs,
+        "destination_m49": dest_m49,
+        "origin_m49": origin_m49,
+        "period": period,
+        "count": int(len(rows)),
+        "rows": rows.to_dict(orient="records"),
+    }
+
+
+@router.get("/{commodity_hs}/{dest_m49}/{origin_m49}/time-series")
+def get_corridor_time_series(
+    commodity_hs: str,
+    dest_m49: int,
+    origin_m49: int,
+    state: AppState = Depends(get_state),
+):
+    """Per-period dependency snapshot plus monthly RASFF activity.
+
+    `dependency_by_period`: keyed by trade year (e.g. 2022, 2023) -> Section 2
+       metric dict (IDR/OCS/HHI/BDI/SCI/...). Empty when no trade data.
+    `notifications_by_month`: keyed by YYYYMM -> count of RASFF notifications
+       on this exact lane in that month.
+    """
+    key = (commodity_hs, dest_m49, origin_m49)
+
+    dep_by_period: dict[int, dict] = {}
+    for period, snapshot in state.dependency_history.items():
+        entry = snapshot.get(key)
+        if entry is not None:
+            dep_by_period[period] = entry
+
+    notif_rows = state.notifications_by_corridor.get(key, [])
+    notif_by_month: dict[int, int] = {}
+    for r in notif_rows:
+        p = int(r.get("period") or 0)
+        if p <= 0:
+            continue
+        notif_by_month[p] = notif_by_month.get(p, 0) + 1
+
+    return {
+        "commodity_hs": commodity_hs,
+        "destination_m49": dest_m49,
+        "origin_m49": origin_m49,
+        "dependency_by_period": {str(k): v for k, v in sorted(dep_by_period.items())},
+        "notifications_by_month": {
+            str(k): v for k, v in sorted(notif_by_month.items())
+        },
+    }

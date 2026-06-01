@@ -1,0 +1,931 @@
+MFARTAHMEEMWATOIRCKAL
+
+                                            for the
+
+EU Food Fraud Vulnerability Intelligence System
+
+               Quantitative Models for Commodity Dependency,
+                 OriginAttention Country Trade Relationships,
+                      and HazardTrade Corridor Integration
+
+                                  Version 1.0 | February 2026 | Working Draft
+Contents
+
+1 Notation and Denitions                                     4
+
+1.1 Index Sets . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4
+
+1.2 Primary Data Variables . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4
+
+1.2.1 From UN Comtrade . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4
+
+1.2.2 From FAOSTAT / Eurostat . . . . . . . . . . . . . . . . . . . . . . . . . . 4
+
+1.2.3 From RASFF Window . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5
+
+2 Commodity Dependency Models                                6
+
+2.1 Domestic Supply Balance . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+
+2.2 Import Dependency Ratio (IDR) . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+
+2.3 Origin Country Share (OCS) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+
+2.4 Bilateral Dependency Index (BDI) . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+
+2.5 Import Concentration: HerndahlHirschman Index (HHI) . . . . . . . . . . . . . 8
+
+2.6 Self-Suciency Ratio (SSR) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+
+2.7 Supply Criticality Index (SCI) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+
+3 Consumption Demand Modelling                               11
+
+3.1 Per Capita Apparent Consumption . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+
+3.2 Commodity Consumption Rank Score . . . . . . . . . . . . . . . . . . . . . . . . 11
+
+3.3 Demand Inelasticity Indicator . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+
+4 Hazard Signal Modelling (RASFFTrade Corridor Integration)  12
+
+4.1 Corridor Denition from RASFF Data . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+4.2 Severity Weighting . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+4.2.1 Classication Weight . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+4.2.2 Risk Decision Weight . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+4.3 Hazard Intensity Score (HIS) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14
+
+4.4 Hazard Diversity Index (HDI) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14
+
+4.5 Detection Gap Indicator (DGI) . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+
+5 Trade Flow Analysis Models                                 16
+
+5.1 Unit Value Analysis (Price Proxy) . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+
+5.2 Volume Anomaly Detection . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+
+5.3 Mirror Trade Discrepancy . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+
+5.4 Trade Network Concentration Shift . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+
+6 OriginAttention Country Relationship Model                 19
+
+6.1 Exposure Network as a Directed Graph . . . . . . . . . . . . . . . . . . . . . . . 19
+
+6.2 Origin Risk Propagation Score (ORPS) . . . . . . . . . . . . . . . . . . . . . . . . 19
+
+6.3 Attention Country Exposure Prole (ACEP) . . . . . . . . . . . . . . . . . . . . 19
+
+6.4 Conditional Probability of Hazard Given Trade . . . . . . . . . . . . . . . . . . . 20
+
+7 Composite Vulnerability Scoring                            21
+
+7.1 Normalisation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21
+
+7.1.1 Option A: Min-Max Normalisation . . . . . . . . . . . . . . . . . . . . . . 21
+
+7.1.2 Option B: Percentile Rank Normalisation . . . . . . . . . . . . . . . . . . 21
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System  v1.0
+
+          7.1.3 Option C: Log-Transform then Percentile . . . . . . . . . . . . . . . . . . 21
+7.2 Composition Approaches . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22
+
+          7.2.1 Approach 1: Weighted Linear Combination (Compensatory) . . . . . . . . 22
+          7.2.2 Approach 2: Geometric Mean (Non-Compensatory) . . . . . . . . . . . . . 22
+          7.2.3 Approach 3: HybridStructural Base with Signal Amplier . . . . . . . . 22
+7.3 Weight Determination . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23
+          7.3.1 Option A: Expert Elicitation (Analytic Hierarchy Process) . . . . . . . . . 23
+          7.3.2 Option B: Equal Weights . . . . . . . . . . . . . . . . . . . . . . . . . . . 23
+          7.3.3 Option C: Empirical Calibration (Future) . . . . . . . . . . . . . . . . . . 23
+
+8 What This Framework Does Not Yet Cover                                 24
+
+3
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System              v1.0
+
+1. Notation and Denitions
+
+All models in this framework use the following standard notation. Every variable is grounded
+in observable, collectible data from the operational sources: RASFF Window, UN Comtrade,
+FAOSTAT, and Eurostat.
+
+1.1 Index Sets
+
+ Index Sets
+
+cC               A commodity, identied by HS 6-digit code
+iN               A destination (importing) country  the attention/follow-up country
+jO               An origin (exporting) country
+tT               A time period (year or year-month)
+hH               A hazard type
+
+where:
+
+H = biological, chem_pesticides, chem_heavy_metals, chem_mycotoxins, chem_other, regulatory
+
+1.2 Primary Data Variables
+
+1.2.1 From UN Comtrade
+ Trade Variables
+
+M (c, i, j, t) = Import quantity (kg) of commodity c by country i from origin j in period t
+V (c, i, j, t) = Import value (USD) of commodity c by country i from origin j in period t
+
+M (c, i, ·, t) = M (c, i, j, t) Total imports from all origins
+
+                         jO
+
+X(c, j, ·, t) =      M (c, i, j, t) Total exports from origin j to all destinations
+
+                 iN
+
+1.2.2 From FAOSTAT / Eurostat
+ Production & Consumption Variables
+
+P (c, i, t) = Domestic production quantity (kg) of commodity c in country i
+D(c, i, t) = Domestic supply for food use (apparent consumption) of commodity c in country i
+Pop(i, t) = Population of country i in period t
+
+                                     4
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System                   v1.0
+
+1.2.3 From RASFF Window
+ Hazard Signal Variables
+
+ R(c, i, j, t) = Count of RASFF notications for commodity c involving origin j
+                 where country i is notier, attention, or follow-up country, in period t
+
+Rh(c, i, j, t) = Count of RASFF notications ltered to hazard type h
+         S(r) = Severity weight assigned to notication r (dened in 4.2)
+
+                          5
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System            v1.0
+
+2. Commodity Dependency Models
+
+This section denes the mathematical models for quantifying how dependent a destination coun-
+try (attention/alert country) is on a specic origin country for a specic commodity. This is the
+structural vulnerability layerit captures the conditions that make fraud economically viable
+and dicult to resist.
+
+2.1 Domestic Supply Balance
+
+The foundation of all dependency analysis is the commodity supply balance equation.
+
+Denition 2.1 (Domestic . Supply) For commodity c in country i at time t:
+
+DS(c, i, t) = P (c, i, t) + M (c, i, ·, t) - X(c, i, ·, t) + S(c, i, t)            (1)
+
+where S(c, i, t) is the change in stocks (draw-down positive, build-up negative).
+
+    When stock change data is unavailable (common at commodity level), set S = 0 to obtain
+
+apparent domestic supply:
+
+DS(c, i, t) = P (c, i, t) + M (c, i, ·, t) - X(c, i, ·, t)                              (2)
+
+       This is the standard FAO simplication used in Food Balance Sheets. Where FAOSTAT
+provides pre-computed balance data, use it directly. Where it does not, compute from Comtrade
+(imports, exports) and FAOSTAT/Eurostat (production).
+
+2.2 Import Dependency Ratio (IDR)
+
+Denition 2.2 . (Import Dependency Ratio) The share of country i's total domestic
+
+supply of commodity c that comes from imports:
+
+M (c, i, ·, t)                          M (c, i, ·, t)
+IDR(c, i, t) = DS(c, i, t) = P (c, i, t) + M (c, i, ·, t) - X(c, i, ·, t)          (3)
+
+Property 2.1 (IDR . Interpretation)
+
+ IDR = 0: Fully self-sucient. All supply is domestic production.
+
+ IDR = 1: Fully import-dependent. No domestic production (net of re-exports).
+
+ 0 < IDR < 1: Partial dependency. Higher values = greater import reliance.
+
+trade hub  IDR > 1: Country re-exports more than it produces domesticallyit acts as a   .
+
+This is itself a fraud-relevant signal (transit creates opacity).
+
+Boundary condition: If DS(c, i, t)  0, the IDR is undened. This implies a data
+
+quality issue (stock drawdown or reporting error). Flag and exclude from scoring until
+resolved.
+
+                                     6
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System            v1.0
+
+2.3 Origin Country Share (OCS)
+
+Before dening bilateral dependency, we need the share that a specic origin contributes to total
+imports.
+
+Denition 2.3 . (Origin Country Share) The proportion of country i's total imports of
+
+commodity c that is sourced from origin j:
+
+OCS(c, i, j, t) =                    M (c, i, j, t)  =  M (c, i, j, t)             (4)
+
+                                     M (c, i, ·, t)         M (c, i, k, t)
+
+                                                        kO
+
+    By construction, jO OCS(c, i, j, t) = 1 and OCS  [0, 1].
+
+2.4 Bilateral Dependency Index (BDI)
+
+Denition 2.4 . (Bilateral Dependency Index) The share of country i's total domestic
+
+supply of commodity c sourced specically from origin j:
+
+                                        M (c, i, j, t)
+BDI(c, i, j, t) = DS(c, i, t)                                                      (5)
+
+This decomposes cleanly into two distinct vulnerability drivers:
+
+BDI(c, i, j, t) = IDR(c, i, t) × OCS(c, i, j, t)                                        (6)
+
+                                     ovdeerpaelnl dimenpcoyrt concoernigtrination
+
+       This decomposition is analytically critical. A country can have high IDR but low BDI for
+any single origin (diversied suppliers). Conversely, moderate IDR with very high OCS for one
+origin = concentrated dependency = the vulnerability.
+
+Property 2.2 (BDI . Interpretation)
+
+ BDI  0: Negligible dependency on this specic origin.
+
+ BDI  1: Nearly the entire domestic supply comes from this single origin.
+
+ BDI = IDR: This origin is the sole supplier. Maximum concentration risk.
+
+                                     7
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System             v1.0
+
+2.5 Import Concentration: HerndahlHirschman Index (HHI)
+
+To measure how concentrated a country's import sources are across all origins:
+
+Denition 2.5 (Import Concentration . Index)
+
+                                             2            M (c, i, j, t) 2
+
+HHI(c, i, t) =      OCS(c, i, j, t) =                     M (c, i, ·, t)            (7)
+
+                jO                              jO
+
+Property 2.3 (HHI . Properties)
+
+  HHI = 1/n for n equal suppliers: perfectly diversied.
+  HHI = 1: single-supplier monopoly.
+  HHI > 0.25: highly concentrated (standard antitrust threshold). A small number of origins
+
+      dominate supply, reducing bargaining power and substitutability.
+
+    The HHI captures systemic vulnerability beyond what a single-corridor BDI shows. Even if
+
+no single origin dominates, high HHI means the market is oligopolisticloss of any supplier has
+disproportionate impact.
+
+2.6 Self-Suciency Ratio (SSR)
+
+Denition 2.6 (Self-Suciency . Ratio)
+
+                SSR(c, i, t) =               P (c, i, t)                            (8)
+
+                                             D(c, i, t)
+
+where D(c, i, t) is FAOSTAT domestic supply for food use, or DS(c, i, t) as proxy.
+
+Property 2.4 (SSR . Interpretation)
+
+  SSR > 1: Net exporter. Low structural vulnerability.
+  SSR = 1: Balanced but fragile.
+  SSR < 1: Gap of (1 - SSR) must be lled by imports.
+  SSR = 0: No domestic production. Fully import-dependent.
+
+                                      8
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System           v1.0
+
+2.7 Supply Criticality Index (SCI)
+
+The SCI is the core corridor-specic measure that integrates import dependency, origin concen-
+tration, and market structure:
+
+   Denition 2.7 (Supply Criticality . Index) For corridor (c, i, j) at time t:
+
+          SCI(c, i, j, t) = IDR(c, i, t) × OCS(c, i, j, t) × 1 + HHI(c, i, t)     (9)
+
+amplier The (1 + HHI) term serves as an  : when the overall import market is concentrated,
+
+the vulnerability of any single corridor within that market is amplied because fewer alternative
+
+suppliers exist.
+
+Property 2.5 (SCI . Properties)
+
+ SCI  [0, 2] since IDR, OCS  [0, 1] and HHI  [0, 1], giving max = 1 × 1 × 2 = 2.
+
+ SCI = 0: No dependency on this origin.
+
+ SCI = 2: Maximum vulnerabilityfully import-dependent, sole supplier, zero diversication.
+
+ For normalisation to [0, 1]: SCInorm = SCI/2.
+
+ Worked Example  RASFF 2026.0129: Cadmium in axseed, France  Belgium
+
+Suppose (to be populated with actual Comtrade/FAOSTAT data):
+
+Variable                  Value Source
+
+P (ax, BE, 2025)               500 t  FAOSTAT
+M (ax, BE, ·, 2025)       12,000 t    Comtrade
+X(ax, BE, ·, 2025)                    Comtrade
+M (ax, BE, FR, 2025)        1,500 t   Comtrade
+                            8,000 t
+
+Step 1: Apparent domestic supply
+
+                  DS = 500 + 12,000 - 1,500 = 11,000 tonnes
+
+Step 2: Import Dependency Ratio
+
+IDR =             12,000  = 1.091 (> 1: Belgium is a transit hub for axseed)
+
+                  11,000
+
+Step 3: Origin Country Share
+
+                                 OCS =   8,000   = 0.667
+
+                                         12,000
+
+Step 4: HHI (suppose other origins: NL=2000t, DE=1500t, other=500t)
+
+HHI = (0.667)2 + (0.167)2 + (0.125)2 + (0.042)2 = 0.445 + 0.028 + 0.016 + 0.002 = 0.490
+
+Step 5: Supply Criticality Index
+
+          SCI = 1.091 × 0.667 × (1 + 0.490) = 1.091 × 0.667 × 1.490 = 1.084
+
+                                         9
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System  v1.0
+
+                                 SCInorm = 1.084 / 2 = 0.542
+Interpretation: Belgium has moderately high structural dependency on France for
+
+axseed. Its ability to reject or divert problematic French axseed shipments is constrained
+by supply needs.
+
+10
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System  v1.0
+
+3. Consumption Demand Modelling
+
+The dependency models capture the supply side. The consumption models capture the demand
+side: how important this commodity is to the country's food system. Together they dene the
+market pressure that fraud exploits.
+
+3.1 Per Capita Apparent Consumption
+
+PCC(c, i, t) =                              D(c, i, t)                   (10)
+
+                                            Pop(i, t)
+
+expressed in kg/capita/year. FAOSTAT Food Balance Sheets provide this directly for
+many commoditycountry pairs.
+
+3.2 Commodity Consumption Rank Score
+
+For each country i and time t, rank all commodities by PCC:
+
+Denition 3.1 (Consumption Rank . Score)
+
+CRS(c, i, t) = 1 -                          Rank(c, i, t) - 1            (11)
+
+                                            |C| - 1
+
+where Rank(c, i, t) is the position of c when all commodities are ordered by PCC(c, i, t)
+descending, and |C| is the total number of commodities.
+
+    CRS = 1 for the highest-consumed commodity, CRS = 0 for the lowest. The normalised
+
+rank is preferable to raw PCC for cross-commodity comparison because dierent commodities
+operate on vastly dierent consumption scales.
+
+3.3 Demand Inelasticity Indicator
+
+Culturally embedded commodities (olive oil in Mediterranean countries, mussels in France)
+have inelastic demandconsumers buy them regardless of conditions. This makes the market
+exploitable. We estimate this using the coecient of variation of historical consumption:
+
+Denition 3.2 (Demand Inelasticity . Score)
+
+ PCC(c, i, t)
+CVD(c, i) = µ PCC(c, i, t)                  over t  {t-5, . . . , t}
+                                                                         (12)
+
+DIS(c, i) = 1 - min CVD(c, i), 1                                         (13)
+
+    DIS = 1 for perfectly stable demand (maximum exploitability). DIS = 0 for highly volatile
+
+demand.
+
+11
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System                 v1.0
+
+4. Hazard Signal Modelling (RASFFTrade Corridor Integration)
+
+4.1 Corridor Denition from RASFF Data
+
+A single RASFF notication r maps to one or more corridors. From the data structure:
+
+                 Origin(r) = j (the origin eld)
+          Commodity(r) = c (mapped to HS code via commodity_code or NLP)
+
+              Affected(r) = {i1, i2, . . . , ik}
+where the Affected set is the union of:
+
+Affected(r) = notifying_country     for_attention                         for_followUp
+
+detected the hazard product may be on market investigation required
+
+Each tuple (c, ik, j) where ik  Affected(r) denes a corridor touched by notication r.
+
+Critical: A single RASFF notication generates multiple corridor signals. RASFF
+
+2026.0053 (zearalenone in organic corn from France, 7 attention countries) creates 7 dis-
+tinct corridors, each with its own dependency, consumption, and trade prole.
+
+4.2 Severity Weighting
+
+Not all notications represent equal risk. The system assigns severity weights based on two
+dimensions from the RASFF data.
+
+4.2.1 Classication Weight
+
+Classication                Wclass                       Rationale
+
+Alert notication             1.0                Product on market; immediate risk
+Border rejection             0.8    Caught at border; indicates origin-level problem
+Information for follow-up    0.7
+Information for attention    0.5                             Requires investigation
+                                       Informational; may not have reached market
+
+4.2.2 Risk Decision Weight
+
+Risk Decision               Wrisk                 Rationale
+
+Serious                      1.0           Conrmed serious health risk
+Potentially serious          0.7           Risk under certain conditions
+Potential risk               0.4    Risk not conrmed but not excluded
+Not serious                  0.2
+                                              Minor or no health impact
+
+Denition 4.1 (Notication Severity . Weight)
+
+                            S(r) = Wclass(r) × Wrisk(r)                                 (14)
+
+                                    12
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System  v1.0
+
+    yielding S(r)  [0.1, 1.0].
+
+13
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System               v1.0
+
+4.3 Hazard Intensity Score (HIS)
+
+The HIS aggregates all RASFF notications for a corridor, weighted by severity and temporal
+recency:
+
+Denition 4.2 (Hazard Intensity . Score)
+
+                       HIS(c, i, j, t) =               S(r) ·  (t-tr)                 (15)
+
+                                          r  R(c,i,j)
+
+where:
+
+          R(c, i, j) = set of all RASFF notications touching corridor (c, i, j)
+                     (0, 1) = temporal decay parameter
+                   tr = time period of notication r
+
+The decay parameter  controls the half-life of a notication's inuence:                (16)
+                                                          - ln 2
+
+                                                 t1/2 = ln 
+
+           Half-life (monthly periods)                 Use case
+
+          0.95          13.5 months                    Shelf-stable commodities
+          0.90          6.6 months                     General-purpose default
+          0.85          4.3 months                      Perishable commodities
+
+The HIS is intentionally unbounded above at this stage. Corridors with many high-
+
+severity notications should produce large scores. Normalisation happens at the composite
+
+scoring stage (7).
+
+4.4 Hazard Diversity Index (HDI)
+
+A corridor with multiple dierent hazard types suggests systemic quality failures, not a single
+controllable problem. Using Shannon entropy:
+
+   Denition 4.3 (Hazard Diversity . Index)
+
+                       HDI(c, i, j) = - ph · ln ph                                    (17)
+
+                                              hH
+
+where ph is the proportion of notications for corridor (c, i, j) with hazard type h.
+
+Normalised to [0, 1]:
+
+                       HDInorm(c, i, j)   =   HDI(c, i, j)                            (18)
+                                                 ln |H|
+
+norm HDI  = 0: all notications have the same hazard type (no diversity).
+
+norm HDI  = 1: all hazard types equally represented (maximum diversity).
+
+                                          14
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System  v1.0
+
+4.5 Detection Gap Indicator (DGI)
+
+A corridor with high trade volume but zero RASFF notications may be under-inspected, not
+safe.
+
+Denition 4.4 (Detection Gap . Indicator)
+
+DGI(c, i, j, t) =  M (c, i, j, t) R(c, i, j, t)
+                                          -                              (19)
+                   M (c, i, ·, t) R(c, i, ·, t)
+
+Property 4.1 (DGI . Interpretation)
+
+  DGI > 0: This origin supplies a larger share of trade than it accounts for in notications.
+
+   Either genuinely cleaner, or under-inspected.
+
+  DGI < 0: Over-represented in problems relative to trade share.
+
+  DGI > 0 combined with high BDI: ag for potential under-detection.
+
+   DGI is undened when R(c, i, ·, t) = 0. In this case, ag as insucient data.
+
+                   15
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System                             v1.0
+
+5. Trade Flow Analysis Models
+
+These models operate on UN Comtrade data to detect anomalies in trade patterns that may
+indicate fraudulent activity.
+
+5.1 Unit Value Analysis (Price Proxy)
+
+Denition 5.1 (Unit Value and Anomaly . Score)
+
+                       UV(c, i, j, t) =    V (c, i, j, t)  (USD/kg)                                 (20)
+
+                                           M (c, i, j, t)
+
+Cross-origin mean and standard deviation:
+
+µUV(c, i, t)           =      1            UV(c, i, j, t)                                           (21)
+                                                                                                    (22)
+                          |Oactive|     j
+
+UV(c, i, t) =                   1                                                                2
+
+                          |Oactive| - 1 j         UV(c, i, j, t) - µUV(c, i, t)
+
+Z-score for origin j:
+
+                       ZUV(c, i, j, t)  =  UV(c, i, j, t) - µUV(c, i, t)                            (23)
+                                                   UV(c, i, t)
+
+Property 5.1 (Price Anomaly . Signals)
+ UV  Z < -2: price well below marketpotential adulteration, substitution, or mis-declaration.
+ UV  Z > +2: price well above marketpotential premium fraud (false quality/origin claims).
+5.2 Volume Anomaly Detection
+
+Rolling-window approach using the corridor's own history:
+
+Denition 5.2 (Volume Anomaly . Score) Over a k-period rolling window:
+
+                          1 t-1
+µM (c, i, j) = k                        M (c, i, j,  )                                              (24)
+                                                                                                    (25)
+                           =t-k                                                                     (26)
+
+                          1 t-1                                                  2
+
+M (c, i, j) =             k-1                     M (c, i, j,  ) - µM (c, i, j)
+
+                                            =t-k
+
+                       ZM (c, i, j, t)  =  M (c, i, j, t) - µM (c, i, j)
+                                                    M (c, i, j)
+
+                                           16
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System  v1.0
+
+    ZM > 2 indicates a trade surge warranting investigation for re-routing, fraudulent volume
+
+ination, or origin laundering.
+
+17
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System                  v1.0
+
+5.3 Mirror Trade Discrepancy
+
+Trade data is reported by both importer and exporter. Discrepancies may indicate fraud.
+
+Denition 5.3 (Mirror Trade . Discrepancy)
+
+MTD(c, i, j, t) = Mi(c, i, j, t) - Xj(c, j, i, t)                        (27)
+
+max Mi(c, i, j, t), Xj(c, j, i, t)
+
+where Mi is what country i reports importing from j, and Xj is what country j reports
+exporting to i.
+
+       Typical legitimate discrepancy (CIF/FOB valuation, timing): 515%. Discrepancies exceed-
+ing 30% warrant investigation. Persistent large discrepancies over multiple periods = strong
+fraud signal.
+
+5.4 Trade Network Concentration Shift
+
+Monitor structural changes in import concentration over time:
+
+HHI(c, i, t) = HHI(c, i, t) - HHI(c, i, t-1)                             (28)
+
+OCS(c, i, j, t) = OCS(c, i, j, t) - OCS(c, i, j, t-1)                    (29)
+
+       A sudden increase in HHI (market becoming more concentrated) combined with a new or
+rapidly growing corridor = potential re-routing signal. A rapid increase in OCS for a previ-
+ously minor origin, while a traditionally dominant origin's OCS decreases, is a structural shift
+warranting investigation.
+
+18
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System                 v1.0
+
+6. OriginAttention Country Relationship Model
+
+This section formalises the network structure of hazard exposure propagation across the EU's
+trade system.
+
+6.1 Exposure Network as a Directed Graph
+
+Denition 6.1 . (Exposure Network) Dene a directed weighted graph G = (V, E) where:
+
+V =ON         (all origin and destination countries)
+E O×N         (directed edges from origin to destination)
+
+An edge (j  i) exists if origin j has triggered a RASFF notication where country
+i appeared as notier, attention, or follow-up. Each edge carries commodity-specic
+
+weights:
+
+              wtrade(j, i, c, t) = M (c, i, j, t)                                       (30)
+
+              whazard(j, i, c, t) = HIS(c, i, j, t)                                     (31)
+
+              wdep(j, i, c, t) = BDI(c, i, j, t)                                        (32)
+
+6.2 Origin Risk Propagation Score (ORPS)
+
+For an origin country j: how broadly does its food fraud risk propagate across the EU?
+
+Denition 6.2 (Origin Risk Propagation . Score)
+
+ORPS(j, c, t) = BDI(c, i, j, t) · HIS(c, i, j, t) · PCC(c, i, t)                        (33)
+
+              iN
+
+       This sums, across all EU destination countries, the product of bilateral dependency, hazard
+
+intensity, and per capita consumption. The result captures total population-weighted vul-
+nerability exposure created by this origin for this commodity across the entire EU. Origins
+
+with high ORPS should receive coordinated EU-level action.
+
+6.3 Attention Country Exposure Prole (ACEP)
+
+For an attention country i: what is its total inbound fraud exposure?
+
+Denition 6.3 (Attention Country Exposure . Prole)
+
+ACEP(i, t) =         BDI(c, i, j, t) · HIS(c, i, j, t) · CRS(c, i, t)                   (34)
+
+              cC jO
+
+       Countries with high ACEP need more inspection resources, laboratory capacity, and coordi-
+nation support.
+
+                     19
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System   v1.0
+
+6.4 Conditional Probability of Hazard Given Trade
+
+For corridors with sucient RASFF history ( 10 notications over 5 years):
+
+Denition 6.4 (Empirical Hazard . Probability)
+
+P^(hazard | c, i, j) =                         R(c, i, j, T )             (35)
+                                               M (c, i, j, T )
+
+                                               m(c)
+
+where T is the total observation period, R(c, i, j, T ) is the total notication count, and
+m(c) is the estimated average shipment size for commodity c.
+
+lower bound This is inherently ait only captures detected hazards. Cross-reference
+
+with the Detection Gap Indicator (19) to distinguish more fraud from more detection.
+
+                                  20
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System  v1.0
+
+7. Composite Vulnerability Scoring
+
+7.1 Normalisation
+
+Each model output operates on a dierent scale. Before combination, they must be normalised.
+Three defensible approaches:
+
+7.1.1 Option A: Min-Max Normalisation
+
+                   xnorm               =    x - xmin                     (36)
+                                          xmax - xmin
+
+Maps to [0, 1]. Simple but sensitive to outliers. xmin and xmax are computed over all corridors.
+
+7.1.2 Option B: Percentile Rank Normalisation
+
+                   xnorm = percentile_rank(x) across all corridors       (37)
+
+    Maps to [0, 1]. Robust to outliers. Interpretation: this corridor is in the 85th percentile for
+
+this metric. More stable when underlying distributions are skewed (which they will bemost
+corridors are low-risk).
+
+7.1.3 Option C: Log-Transform then Percentile
+
+                   xnorm = percentile_rank ln(1 + x)                     (38)
+
+       Appropriate for highly skewed metrics (notication counts, trade volumes) where a small
+number of corridors dominate.
+
+Recommendation: Option B (percentile rank) for most metrics. Option C (log-
+
+percentile) for HIS due to exponential distribution of notication counts. Validate with
+your data once a full corridor dataset is available.
+
+                                          21
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System  v1.0
+
+7.2 Composition Approaches
+
+Three approaches, each with dierent properties:
+
+7.2.1 Approach 1: Weighted Linear Combination (Compensatory)
+
+                 K                               K
+
+CVS = wk · xk,norm                   where            wk = 1             (39)
+
+                k=1                              k=1
+
+       A high score on one metric compensates for a low score on another. A corridor with zero
+hazard history but extreme dependency would still get a moderate score. Whether this is
+desirable is a design decision.
+
+7.2.2 Approach 2: Geometric Mean (Non-Compensatory)
+
+                                K
+
+CVS =                                xk,norm wk                          (40)
+
+                                k=1
+
+    If any component is zero, the composite is zero. Appropriate if you believe all conditions
+
+must be present for vulnerability. More conservative; may miss emerging risks.
+
+7.2.3 Approach 3: HybridStructural Base with Signal Amplier
+
+CVS = SCInorm × CRSnorm × 1 + wh · HISnorm + wp · PASnorm + wsc · SCCSnorm
+
+BASE: structural vulnerability       AMPLIFIER: hazard & trade signals
+
+                                                                         (41)
+
+       The BASE requires both structural dependency and consumption demand. If either is zero,
+the corridor scores zero regardless of other factorsyou cannot have vulnerability without a
+market to exploit. The AMPLIFIER adds risk weight from hazard history, price anomalies,
+
+and supply chain complexity, but cannot create vulnerability where structural conditions do not
+
+exist.
+
+                             CVShybrid  0, 1 · (1 + wh + wp + wsc)
+
+    Normalise to [0, 1] by dividing by the theoretical maximum (1 + wh + wp + wsc).
+
+     All three approaches are presented because the right choice depends on a decision you
+     must make: should the system ag corridors where structural vulnerability exists but no
+     hazard has been detected yet (Approach 3), or only corridors where all signals converge
+     (Approach 2)?
+
+                                22
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System  v1.0
+
+7.3 Weight Determination
+
+7.3.1 Option A: Expert Elicitation (Analytic Hierarchy Process)
+
+Convene food fraud investigators and domain experts. Use structured pairwise comparison
+(AHP) to derive weights from expert judgement. Most defensible starting point without vali-
+dated outcome data.
+
+7.3.2 Option B: Equal Weights
+
+                         1                                               (42)
+                 wk = K  k
+
+       Most transparent and least assumption-laden. Research in multi-criteria decision analysis
+shows equal-weight models often perform surprisingly close to optimally-weighted models when
+true optimal weights are unknown.
+
+7.3.3 Option C: Empirical Calibration (Future)
+
+Once sucient validated fraud outcomes are accumulated (n  50100 across diverse commodi-
+
+ties):
+
+P^(fraud | x) =                                 1                        (43)
+
+                 1 + exp - (0 + 1x1 + · · · + K xK )
+
+    The learned logistic regression coecients ^k serve as empirically calibrated weights. Al-
+
+ternative: gradient-boosted classication (XGBoost/LightGBM) with SHAP values for inter-
+pretability.
+
+Honest assessment: Option C will not be available at launch. Start with Option A or
+
+B. Equal weights with expert review of the rst batch of scored corridors is the pragmatic
+path.
+
+                 23
+Mathematical Framework: EU Food Fraud Vulnerability Intelligence System  v1.0
+
+8. What This Framework Does Not Yet Cover
+
+The following are areas where the mathematical modelling requires input that has not been
+specied:
+
+ 1. Price data source and granularity. The unit value analysis (5.1) uses Comtrade
+
+         value/volume as a price proxy. This is crude. If actual import price indices (Eurostat)
+         or wholesale market prices are available, the models become signicantly more precise.
+         What price data do you have or plan to acquire?
+
+ 2. HS code mapping methodology. The entire framework depends on reliably matching
+
+     RASFF commodity descriptions to HS codes for Comtrade matching. The Commodity_Code
+
+         eld in your data is sometimes populated, sometimes not. What is the plan for missing
+         values? This is a make-or-break data engineering problem.
+
+ 3. Temporal granularity. The models work at annual or monthly resolution. RASFF data
+
+         is daily; Comtrade is annual/monthly; FAOSTAT is annual with 12 year lag. What is the
+         target update cycle?
+
+ 4. Validation data. Do you have access to conrmed fraud cases (from FFN, OLAF, or
+
+         Member State authorities) to validate model outputs? Without validation, the scoring
+         system is a hypothesis, not a proven model.
+
+ 5. Scope of commodities. Your sample data covers cereals, feed materials, and bivalve
+
+         molluscs. Dierent commodity types may require dierent parameterisations (e.g., the
+
+      decay parameter  should be faster for perishable goods than for shelf-stable goods).
+
+END OF MATHEMATICAL FRAMEWORK | Version 1.0 | February 2026
+
+24
+

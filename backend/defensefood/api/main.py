@@ -35,7 +35,7 @@ class SafeJSONResponse(JSONResponse):
     def render(self, content: Any) -> bytes:
         return super().render(_sanitize_floats(content))
 
-from defensefood.api.dependencies import get_state
+from defensefood.api.dependencies import get_state, refresh_coverage
 from defensefood.pipeline.scoring_pipeline import run_scoring_pipeline
 
 
@@ -55,6 +55,7 @@ from defensefood.api.routers import (
     hazards,
     health,
     network,
+    research,
     scores,
 )
 
@@ -73,6 +74,9 @@ async def lifespan(app: FastAPI):
             state.scoring_config,
         )
         print(f"Initial CVS scoring applied to {len(state.corridor_metrics)} corridors")
+        # CVS just landed on corridor_metrics; refresh coverage so the
+        # research workbench reports the right cvs-available count.
+        refresh_coverage(state)
     yield
 
 
@@ -101,6 +105,7 @@ app.include_router(commodities.router, prefix="/api/v1")
 app.include_router(hazards.router, prefix="/api/v1")
 app.include_router(scores.router, prefix="/api/v1")
 app.include_router(network.router, prefix="/api/v1")
+app.include_router(research.router, prefix="/api/v1")
 
 
 @app.get("/")

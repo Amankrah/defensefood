@@ -6,30 +6,32 @@ Docs: https://uncomtrade.org/docs/subscriptions/
 Fetches trade quantity and trade value between two countries.
 """
 
-import os
+import sys
+from pathlib import Path
+
 import requests
 import json
 import time
 import pandas as pd
 from typing import Optional, List
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Allow imports from backend/defensefood when running from backend/script/
+_BACKEND = Path(__file__).resolve().parent.parent
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
+
+from defensefood.ingestion.comtrade_keys import (  # noqa: E402
+    QuotaExhausted,
+    get_key_pool,
+    is_quota_http_error,
+)
 
 
 # ─────────────────────────────────────────────
 #  CONFIG
 # ─────────────────────────────────────────────
 
-SUBSCRIPTION_KEY = os.getenv("COMTRADE_SUBSCRIPTION_KEY", "1da582ac898f4f2bab671c90a019411c")
-
 BASE_URL = "https://comtradeapi.un.org/data/v1/get"
-
-DEFAULT_HEADERS = {
-    "Cache-Control": "no-cache",
-    "Ocp-Apim-Subscription-Key": SUBSCRIPTION_KEY,
-}
 
 
 # ─────────────────────────────────────────────
@@ -74,13 +76,27 @@ def fetch_trade_data(
     print(f"-> Requesting: {url}")
     print(f"   Params: {params}")
 
+    pool = get_key_pool()
     try:
-        response = requests.get(url, headers=DEFAULT_HEADERS, params=params, timeout=30)
-        response.raise_for_status()
-        return response.json()
-
-    except requests.exceptions.HTTPError as e:
-        print(f"[HTTP Error] {e.response.status_code}: {e.response.text}")
+        while True:
+            try:
+                response = requests.get(
+                    url, headers=pool.headers(), params=params, timeout=30
+                )
+                response.raise_for_status()
+                return response.json()
+            except requests.exceptions.HTTPError as e:
+                status = getattr(e.response, "status_code", None)
+                body = (getattr(e.response, "text", "") or "").strip()
+                if is_quota_http_error(status, body) and pool.rotate():
+                    continue
+                if is_quota_http_error(status, body) and pool.all_exhausted():
+                    raise QuotaExhausted(
+                        body[:200] or "HTTP 403: all Comtrade API keys out of quota"
+                    ) from e
+                print(f"[HTTP Error] {status}: {body[:300]}")
+                raise
+    except QuotaExhausted:
         raise
     except requests.exceptions.Timeout:
         print("[Error] Request timed out.")

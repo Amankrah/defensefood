@@ -23,7 +23,9 @@ def _write_bulk(tmp_path):
     prod.to_csv(tmp_path / "Production_Crops_Livestock_E_All_Data.csv", index=False)
     fbs = pd.DataFrame({
         "Area Code (M49)": ["'620", "'620"],
-        "Item Code (CPC)": ["'01123", "'01123"],
+        "Item Code": [2807, 2807],
+        "Item Code (FBS)": ["'S2807", "'S2807"],
+        "Item": ["Rice and products", "Rice and products"],
         "Element": ["Domestic supply quantity", "Total Population - Both sexes"],
         "Year": [2022, 2022],
         "Unit": ["1000 t", "1000 No"],

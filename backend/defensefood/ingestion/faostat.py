@@ -71,12 +71,21 @@ def _resolve_col(df: pd.DataFrame, key: str) -> Optional[str]:
 
 
 def _find_files(directory: Path, *keywords: str) -> list[Path]:
-    """CSV files in `directory` whose name contains any keyword (case-insensitive)."""
+    """CSV files under `directory` whose name contains any keyword (case-insensitive).
+
+    FAOSTAT bulk zips unpack into subfolders (e.g.
+    ``Production_Crops_Livestock_E_All_Data_(Normalized)/...csv``), so we search
+    recursively. Metadata sidecars (ItemCodes, AreaCodes, Elements, Flags) are
+    skipped; only the main long-format data file is loaded.
+    """
     if not directory.is_dir():
         return []
+    skip_fragments = ("itemcodes", "areacodes", "elements", "flags")
     out: list[Path] = []
-    for p in sorted(directory.glob("*.csv")):
+    for p in sorted(directory.rglob("*.csv")):
         name = p.name.lower()
+        if any(s in name for s in skip_fragments):
+            continue
         if any(k.lower() in name for k in keywords):
             out.append(p)
     return out
@@ -93,8 +102,13 @@ def _to_m49(value: object) -> Optional[int]:
     return int(s)
 
 
-def _normalise_long(df: pd.DataFrame) -> Optional[pd.DataFrame]:
-    """Reduce a raw FAOSTAT bulk frame to [cpc, m49, year, element, unit, value]."""
+def _is_fbs_frame(df: pd.DataFrame) -> bool:
+    """True when this bulk file is Food Balance Sheets (FBS item codes, not CPC)."""
+    return "Item Code (FBS)" in df.columns or "foodbalance" in str(df.columns).lower()
+
+
+def _normalise_long(df: pd.DataFrame, *, fbs: bool = False) -> Optional[pd.DataFrame]:
+    """Reduce a raw FAOSTAT bulk frame to long columns for accumulation."""
     cols = {k: _resolve_col(df, k) for k in _COL_CANDIDATES}
     required = ("area_m49", "element", "year", "value")
     if any(cols[k] is None for k in required):
@@ -107,8 +121,18 @@ def _normalise_long(df: pd.DataFrame) -> Optional[pd.DataFrame]:
         "year": pd.to_numeric(df[cols["year"]], errors="coerce"),
         "value": pd.to_numeric(df[cols["value"]], errors="coerce"),
     })
-    out["cpc"] = df[cols["item_cpc"]].map(normalize_cpc) if cols["item_cpc"] else None
     out["unit"] = df[cols["unit"]].astype(str).str.strip().str.lower() if cols["unit"] else ""
+    if fbs:
+        # FBS rows use aggregate SUA item codes (e.g. 2807 Rice), not CPC 01123.
+        out["item_label"] = (
+            df["Item"].astype(str).str.strip().str.lower()
+            if "Item" in df.columns
+            else ""
+        )
+        out["cpc"] = None
+    else:
+        out["item_label"] = ""
+        out["cpc"] = df[cols["item_cpc"]].map(normalize_cpc) if cols["item_cpc"] else None
     out = out.dropna(subset=["m49", "year", "value"])
     out["m49"] = out["m49"].astype(int)
     out["year"] = out["year"].astype(int)
@@ -155,6 +179,49 @@ class FaostatStore:
         return self.population_by_country.get((m49, year))
 
 
+def _hs_codes_for_fbs_item(item_label: str, conc: pd.DataFrame) -> list[str]:
+    """Map an FBS aggregate item label to HS codes via concordance keyword match."""
+    label = (item_label or "").strip().lower()
+    if not label:
+        return []
+
+    # HS chapter hints for common FBS aggregates (fallback when name match is weak).
+    prefix_hints: list[tuple[str, str]] = [
+        ("rice", "1006"),
+        ("wheat", "1001"),
+        ("barley", "1003"),
+        ("maize", "1005"),
+        ("mussel", "0307"),
+        ("fish", "0302"),
+        ("seafood", "0307"),
+        ("honey", "0409"),
+        ("olive", "1509"),
+        ("flax", "1204"),
+        ("linseed", "1204"),
+        ("feed", "2309"),
+    ]
+    for needle, prefix in prefix_hints:
+        if needle in label:
+            hits = sorted({hs for hs in conc["hs"] if hs.startswith(prefix)})
+            if hits:
+                return hits
+
+    stop = {"and", "the", "other", "products", "excluding", "beer", "n.e.c.", "nec"}
+    tokens = [
+        t for t in label.replace(",", " ").replace("-", " ").split()
+        if len(t) > 2 and t not in stop
+    ]
+    if not tokens:
+        return []
+
+    matched: set[str] = set()
+    for _, row in conc.iterrows():
+        comm = str(row["commodity"]).lower()
+        if any(tok in comm for tok in tokens):
+            matched.add(row["hs"])
+    return sorted(matched)
+
+
 def _accumulate_by_hs(
     long_df: pd.DataFrame,
     wanted_elements: tuple[str, ...],
@@ -162,7 +229,6 @@ def _accumulate_by_hs(
 ) -> None:
     """Sum CPC-keyed values into an HS-keyed dict via the concordance."""
     rows = long_df[long_df["element"].map(lambda e: _match_element(e, wanted_elements))]
-    # Precompute CPC -> [HS] from the concordance lazily per CPC seen.
     cpc_to_hs_cache: dict[str, list[str]] = {}
     from defensefood.ingestion.hs_codes import load_hs_cpc_concordance
     conc = load_hs_cpc_concordance()
@@ -176,6 +242,30 @@ def _accumulate_by_hs(
         kg = _value_to_kg(float(r["value"]), r["unit"])
         m49, year = int(r["m49"]), int(r["year"])
         for hs in cpc_to_hs_cache[cpc]:
+            key = (hs, m49, year)
+            target[key] = target.get(key, 0.0) + kg
+
+
+def _accumulate_fbs_domestic_by_hs(
+    long_df: pd.DataFrame,
+    target: dict[tuple[str, int, int], float],
+) -> None:
+    """Map FBS domestic supply (aggregate items) onto HS codes for SSR/CRS."""
+    rows = long_df[long_df["element"].map(lambda e: _match_element(e, _DOMESTIC_SUPPLY_ELEMENTS))]
+    from defensefood.ingestion.hs_codes import load_hs_cpc_concordance
+    conc = load_hs_cpc_concordance()
+    label_cache: dict[str, list[str]] = {}
+
+    for _, r in rows.iterrows():
+        label = str(r.get("item_label") or "")
+        if label not in label_cache:
+            label_cache[label] = _hs_codes_for_fbs_item(label, conc)
+        hs_codes = label_cache[label]
+        if not hs_codes:
+            continue
+        kg = _value_to_kg(float(r["value"]), r["unit"])
+        m49, year = int(r["m49"]), int(r["year"])
+        for hs in hs_codes:
             key = (hs, m49, year)
             target[key] = target.get(key, 0.0) + kg
 
@@ -206,7 +296,7 @@ def load_faostat_store(data_dir: Optional[Path] = None) -> FaostatStore:
         except Exception as e:  # noqa: BLE001 - bad file shouldn't crash startup
             logger.warning("Failed to read FAOSTAT production file %s: %s", path.name, e)
             continue
-        long_df = _normalise_long(raw)
+        long_df = _normalise_long(raw, fbs=_is_fbs_frame(raw))
         if long_df is None:
             continue
         _accumulate_by_hs(long_df, _PRODUCTION_ELEMENTS, store.production)
@@ -218,10 +308,10 @@ def load_faostat_store(data_dir: Optional[Path] = None) -> FaostatStore:
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to read FAOSTAT FBS file %s: %s", path.name, e)
             continue
-        long_df = _normalise_long(raw)
+        long_df = _normalise_long(raw, fbs=True)
         if long_df is None:
             continue
-        _accumulate_by_hs(long_df, _DOMESTIC_SUPPLY_ELEMENTS, store.domestic_supply)
+        _accumulate_fbs_domestic_by_hs(long_df, store.domestic_supply)
         # Population is country-level, not commodity-level.
         pop_rows = long_df[long_df["element"].map(lambda e: _match_element(e, _POPULATION_ELEMENTS))]
         for _, r in pop_rows.iterrows():

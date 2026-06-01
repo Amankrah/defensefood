@@ -18,7 +18,9 @@ Usage:
     python fetch_comtrade_pipeline.py --reporter France --partner Belgium --years 2022
 
 Environment:
-    Set COMTRADE_SUBSCRIPTION_KEY in your .env file or environment variables.
+    Set COMTRADE_SUBSCRIPTION_KEYS (comma-separated) or COMTRADE_SUBSCRIPTION_KEY
+    in backend/script/.env. On HTTP 403 quota, the fetcher rotates to the next key
+    automatically; the run stops only when every key is exhausted.
 """
 
 import argparse
@@ -41,16 +43,11 @@ MAX_429_RETRIES = 6
 _DEFAULT_BACKOFF_CAP = 30
 
 
-class QuotaExhausted(Exception):
-    """Raised on HTTP 403 (call-volume quota) -- a clean, resumable hard stop.
-
-    The all-partners pipeline catches this and stops: the checkpoint is saved
-    through the last fully-completed job, so --resume picks up exactly where it
-    left off (the interrupted job is retried in full, never frozen with holes).
-    """
-
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from defensefood.ingestion.comtrade_keys import QuotaExhausted  # noqa: E402
 
 from comtrade_fetcher import (
     fetch_bilateral_trade,
@@ -448,7 +445,7 @@ def _retry_after_seconds(err: requests.exceptions.HTTPError, attempt: int) -> in
 
 
 def _fetch_one(reporter_code: str, hs: str, flow: str, period: str, max_records: int) -> dict:
-    """One all-partners Comtrade call, retrying transient 429s and aborting on 403."""
+    """One all-partners Comtrade call; 429 retries; 403 rotates keys then retries."""
     for attempt in range(MAX_429_RETRIES + 1):
         try:
             return fetch_trade_data(
@@ -456,11 +453,10 @@ def _fetch_one(reporter_code: str, hs: str, flow: str, period: str, max_records:
                 reporter_code=reporter_code, partner_code=None,  # all partners
                 cmd_code=hs, flow_code=flow, period=period, max_records=max_records,
             )
+        except QuotaExhausted:
+            raise  # all keys exhausted -- resumable stop for the pipeline
         except requests.exceptions.HTTPError as e:
             status = getattr(e.response, "status_code", None)
-            body = (getattr(e.response, "text", "") or "").strip()
-            if status == 403:  # call-volume quota -> clean, resumable stop
-                raise QuotaExhausted(body[:200] or "HTTP 403 out of call volume quota") from e
             if status == 429 and attempt < MAX_429_RETRIES:
                 wait = _retry_after_seconds(e, attempt)
                 print(f"   [429] burst limit; backing off {wait}s "

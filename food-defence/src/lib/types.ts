@@ -245,3 +245,107 @@ export interface OriginRisk {
   total_severity: number;
   corridor_count: number;
 }
+
+// ── Research mode ──
+
+export interface CoverageReport {
+  corridors_total: number;
+  corridors_faostat: number;
+  corridors_with_dependency: number;
+  corridors_with_crs: number;
+  corridors_with_cvs: number;
+  corridors_idr_gt_1: number;
+  unmapped_origins: string[];
+  unmapped_destinations: string[];
+  trade_periods: number[];
+  rasff_periods_count: number;
+  rasff_period_min: number | null;
+  rasff_period_max: number | null;
+  by_hs_chapter: {
+    chapter: string;
+    total: number;
+    faostat: number;
+    trade_only: number;
+    no_trade: number;
+  }[];
+  faostat_available: boolean;
+}
+
+export interface MethodologyEntry {
+  key: string;
+  name: string;
+  abbr: string;
+  section: string;
+  blueprint_eq: string;
+  formula_latex: string;
+  inputs: string[];
+  definition: string;
+  source: string;
+}
+
+export interface DistributionStats {
+  count: number;
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+  median: number | null;
+  p25: number | null;
+  p75: number | null;
+  p90: number | null;
+  std: number | null;
+}
+
+export interface DistributionResponse {
+  metric: string;
+  bins: { x0: number; x1: number; count: number }[];
+  stats: DistributionStats;
+  filters: { provenance: string | null; origin_eu: boolean | null; dest_eu: boolean | null };
+}
+
+export interface CohortRow {
+  group: Record<string, string>;
+  count: number;
+  value: number;
+}
+
+export interface CohortResponse {
+  group_by: string[];
+  metric: string;
+  agg: string;
+  count: number;
+  rows: CohortRow[];
+}
+
+export interface RawNotification {
+  reference: string;
+  period: number;
+  classification: string;
+  risk_decision: string;
+  hazard_category: string;
+  destination_roles: string[];
+  severity_weight: number;
+}
+
+export interface RawTradeRow {
+  period: number;
+  reporterCode: number;
+  reporterDesc: string;
+  partnerCode: number;
+  partnerDesc: string;
+  cmdCode: string;
+  cmdDesc: string;
+  flowCode: string;
+  flowDesc: string;
+  primaryValue: number;
+  netWgt: number;
+  qty: number;
+  qtyUnitAbbr: string;
+}
+
+export interface LaneTimeSeries {
+  commodity_hs: string;
+  destination_m49: number;
+  origin_m49: number;
+  dependency_by_period: Record<string, Record<string, number | string | boolean>>;
+  notifications_by_month: Record<string, number>;
+}

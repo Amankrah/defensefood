@@ -5,24 +5,20 @@ Refactored from backend/script/comtrade_fetcher.py.
 Fetches bilateral trade data for commodity-country pairs.
 """
 
-import os
 import time
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import requests
-from dotenv import load_dotenv
 
-load_dotenv()
+from defensefood.ingestion.comtrade_keys import (
+    QuotaExhausted,
+    get_key_pool,
+    is_quota_http_error,
+)
 
 BASE_URL = "https://comtradeapi.un.org/data/v1/get"
-SUBSCRIPTION_KEY = os.getenv("COMTRADE_SUBSCRIPTION_KEY", "")
-
-DEFAULT_HEADERS = {
-    "Cache-Control": "no-cache",
-    "Ocp-Apim-Subscription-Key": SUBSCRIPTION_KEY,
-}
 
 # Columns of interest from Comtrade response
 TRADE_COLUMNS = [
@@ -60,9 +56,20 @@ def fetch_trade_data(
     }
     params = {k: v for k, v in params.items() if v}
 
-    response = requests.get(url, headers=DEFAULT_HEADERS, params=params, timeout=30)
-    response.raise_for_status()
-    return response.json()
+    pool = get_key_pool()
+    while True:
+        try:
+            response = requests.get(url, headers=pool.headers(), params=params, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError as e:
+            status = getattr(e.response, "status_code", None)
+            body = (getattr(e.response, "text", "") or "").strip()
+            if is_quota_http_error(status, body) and pool.rotate():
+                continue
+            if is_quota_http_error(status, body):
+                raise QuotaExhausted(body[:200] or "HTTP 403: all keys out of quota") from e
+            raise
 
 
 def response_to_dataframe(response: dict) -> pd.DataFrame:

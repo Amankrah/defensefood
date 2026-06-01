@@ -86,8 +86,8 @@ def _http_error(status: int, body: str = "") -> requests.exceptions.HTTPError:
 
 def test_quota_403_aborts_and_preserves_progress(tmp_path, monkeypatch):
     def fake(reporter_code, cmd_code, flow_code, period, **kw):
-        if str(reporter_code) == "40":  # second job hits the daily quota
-            raise _http_error(403, '{"statusCode":403,"message":"Out of call volume quota."}')
+        if str(reporter_code) == "40":  # all keys exhausted
+            raise fcp.QuotaExhausted("Out of call volume quota.")
         return {"data": [{"period": period, "reporterCode": int(reporter_code),
                           "partnerCode": 251, "partner2Code": 0, "cmdCode": cmd_code,
                           "flowCode": flow_code, "netWgt": 7000.0}]}

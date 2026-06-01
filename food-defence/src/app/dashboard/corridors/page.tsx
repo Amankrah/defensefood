@@ -7,6 +7,8 @@ import type { CorridorMetric, Country } from "@/lib/types";
 import { riskColor, fmt, truncate } from "@/lib/utils";
 import DataTable, { type Column } from "@/components/shared/DataTable";
 import { RolePills } from "@/components/shared/RolePill";
+import CollapsibleSection from "@/components/shared/CollapsibleSection";
+import { whyLine } from "@/lib/whyLine";
 
 const COLUMNS: Column<CorridorMetric>[] = [
   {
@@ -14,7 +16,7 @@ const COLUMNS: Column<CorridorMetric>[] = [
     label: "Origin",
     headerDescription: "Exporting country for this lane.",
     type: "string",
-    render: (r) => <span className="font-medium">{r.origin_country}</span>,
+    render: (r) => <span className="font-medium text-slate-900">{r.origin_country}</span>,
   },
   {
     key: "destination_country",
@@ -23,24 +25,35 @@ const COLUMNS: Column<CorridorMetric>[] = [
     type: "string",
   },
   {
-    key: "commodity_hs",
-    label: "HS code",
-    headerDescription: "Harmonised system product code.",
-    type: "string",
-    render: (r) => <span className="font-mono text-xs">{r.commodity_hs}</span>,
-  },
-  {
     key: "commodity_name",
     label: "Commodity",
-    headerDescription: "Plain language product name.",
+    headerDescription: "Product category. The chip shows the HS prefix.",
     type: "string",
-    render: (r) => <span title={r.commodity_name}>{truncate(r.commodity_name, 30)}</span>,
+    render: (r) => (
+      <span title={r.commodity_name} className="text-xs text-slate-700">
+        <span className="mr-1 inline-block rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
+          {r.commodity_hs}
+        </span>
+        {truncate(r.commodity_name, 26)}
+      </span>
+    ),
+  },
+  {
+    key: "why",
+    label: "Why this lane",
+    headerDescription:
+      "Plain-language synthesis of the hazard and supply signals on the lane.",
+    type: "string",
+    sortable: false,
+    render: (r) => (
+      <p className="max-w-md text-xs leading-snug text-slate-700">{whyLine(r)}</p>
+    ),
   },
   {
     key: "his",
-    label: "Hazard",
+    label: "Hazard intensity (HIS)",
     headerDescription:
-      "Hazard intensity (HIS): strength of RASFF-linked signals on this lane (higher = more concern).",
+      "Severity-weighted, time-decayed RASFF signal on this lane. Higher = more concern.",
     type: "number",
     render: (r) => (
       <span className={`font-mono font-semibold ${riskColor(r.his, 0.5)}`}>
@@ -50,9 +63,9 @@ const COLUMNS: Column<CorridorMetric>[] = [
   },
   {
     key: "hdi",
-    label: "Diversity",
+    label: "Hazard diversity (HDI)",
     headerDescription:
-      "Hazard diversity (HDI): spread of hazard types; helps distinguish repeated vs varied issues.",
+      "Spread of hazard types — distinguishes repeated single-issue lanes from broad-spectrum ones.",
     type: "number",
   },
   {
@@ -65,7 +78,7 @@ const COLUMNS: Column<CorridorMetric>[] = [
   {
     key: "severity_total",
     label: "Alert weight",
-    headerDescription: "Cumulative seriousness of those alerts (weighted).",
+    headerDescription: "Cumulative seriousness across alerts (severity-weighted).",
     type: "number",
     render: (r) => <span className="font-mono">{fmt(r.severity_total, 2)}</span>,
   },
@@ -73,16 +86,16 @@ const COLUMNS: Column<CorridorMetric>[] = [
     key: "destination_roles",
     label: "Destination role",
     headerDescription:
-      "RASFF role(s) that flagged the destination: notifier (detected), distribution (shipped), follow-up (must investigate), attention (passive).",
+      "RASFF roles that flagged the destination: notifier (detected), distribution (shipped), follow-up (must investigate), attention (passive).",
     type: "string",
     sortable: false,
     render: (r) => <RolePills roles={r.destination_roles} />,
   },
   {
     key: "sci",
-    label: "Dependency (SCI)",
+    label: "Supply criticality (SCI)",
     headerDescription:
-      "Supply criticality index (Section 2): structural reliance on this origin, amplified by supplier concentration (0–2, higher = more critical). '-' when no trade data for the lane.",
+      "Structural reliance on this origin amplified by supplier concentration (0–2). '—' when bilateral trade data is missing for the lane.",
     type: "number",
     render: (r) => (
       <span
@@ -97,7 +110,7 @@ const COLUMNS: Column<CorridorMetric>[] = [
             : "No trade data for this corridor"
         }
       >
-        {r.sci != null ? fmt(r.sci) : "-"}
+        {r.sci != null ? fmt(r.sci) : "—"}
         {r.sci != null && r.provenance !== "faostat" && (
           <span className="ml-0.5 text-slate-400" aria-hidden>≈</span>
         )}
@@ -106,13 +119,13 @@ const COLUMNS: Column<CorridorMetric>[] = [
   },
   {
     key: "cvs",
-    label: "Priority",
+    label: "Priority (CVS)",
     headerDescription:
-      "Combined vulnerability score (CVS), 0 to 1: higher means review sooner.",
+      "Combined priority score, 0–1. Higher = review sooner.",
     type: "number",
     render: (r) => (
       <span className={`font-mono font-semibold ${riskColor(r.cvs ?? 0, 0.5)}`}>
-        {r.cvs != null ? fmt(r.cvs) : "-"}
+        {r.cvs != null ? fmt(r.cvs) : "—"}
       </span>
     ),
   },
@@ -201,6 +214,25 @@ function buildListQuery(f: CorridorFilters): string {
   if (f.destEu === "eu") p.set("dest_eu", "true");
   if (f.destEu === "non") p.set("dest_eu", "false");
   return p.toString();
+}
+
+function countActiveFilters(f: CorridorFilters): number {
+  let n = 0;
+  if (f.commodity.trim()) n++;
+  if (f.origin) n++;
+  if (f.destination) n++;
+  if (f.role) n++;
+  if (f.activeOnly) n++;
+  if (f.minHis.trim()) n++;
+  if (f.minNotifications.trim()) n++;
+  if (f.minHdi.trim()) n++;
+  if (f.minSci.trim()) n++;
+  if (f.minCvs.trim()) n++;
+  if (f.hasCvs) n++;
+  if (f.originEu) n++;
+  if (f.destEu) n++;
+  if (f.sortBy && f.sortBy !== "his") n++;
+  return n;
 }
 
 function corridorViewStats(rows: CorridorMetric[]) {
@@ -428,70 +460,80 @@ export default function CorridorExplorer() {
     );
   }
 
+  // Count user-applied filters for the collapsed-header summary.
+  const activeFilterCount = countActiveFilters(filters);
+  const quickViewActions = (
+    <>
+      <span className="hidden text-[10px] font-medium uppercase tracking-wide text-slate-500 sm:inline">
+        Quick views
+      </span>
+      <button
+        type="button"
+        onClick={() => applyPreset("high_hazard")}
+        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+      >
+        Hazard ≥ 0.5
+      </button>
+      <button
+        type="button"
+        onClick={() => applyPreset("active_dest")}
+        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+      >
+        Active destination
+      </button>
+      <button
+        type="button"
+        onClick={() => applyPreset("notifier")}
+        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+      >
+        Notifier role
+      </button>
+      <button
+        type="button"
+        onClick={() => applyPreset("eu_to_eu")}
+        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+      >
+        EU → EU
+      </button>
+      <button
+        type="button"
+        onClick={() => applyPreset("non_eu_origin_eu_dest")}
+        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+      >
+        Non-EU → EU
+      </button>
+      <button
+        type="button"
+        onClick={() => setFilters(DEFAULT_FILTERS)}
+        className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-800 hover:bg-slate-100"
+      >
+        Reset
+      </button>
+    </>
+  );
+
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-lg font-bold text-slate-900">Corridor list</h1>
-        <p className="text-xs text-slate-600">
-          Explore trade lanes with server-side filters and sort (up to 1000 rows per request).
-          Hover column titles for score definitions. Open a row for full diagnostics.
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-600/90">
+          Investigate
+        </p>
+        <h1 className="text-xl font-bold tracking-tight text-slate-900">Corridor list</h1>
+        <p className="mt-1 text-xs text-slate-600">
+          Filter every loaded trade lane. Open a row for the full forensic report; export the current view to CSV.
         </p>
       </div>
 
-      <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-slate-800" id="corridor-filters-heading">
-            Filters
-          </h2>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
-              Quick views
-            </span>
-            <button
-              type="button"
-              onClick={() => applyPreset("high_hazard")}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
-            >
-              HIS ≥ 0.5
-            </button>
-            <button
-              type="button"
-              onClick={() => applyPreset("active_dest")}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
-            >
-              Active destination
-            </button>
-            <button
-              type="button"
-              onClick={() => applyPreset("notifier")}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
-            >
-              Notifier role
-            </button>
-            <button
-              type="button"
-              onClick={() => applyPreset("eu_to_eu")}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
-            >
-              EU → EU
-            </button>
-            <button
-              type="button"
-              onClick={() => applyPreset("non_eu_origin_eu_dest")}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
-            >
-              Non-EU → EU
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilters(DEFAULT_FILTERS)}
-              className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-800 hover:bg-slate-100"
-            >
-              Reset
-            </button>
-          </div>
-        </div>
-
+      <CollapsibleSection
+        title="Filters"
+        subtitle={
+          activeFilterCount > 0
+            ? `${activeFilterCount} active`
+            : "click to expand"
+        }
+        actions={quickViewActions}
+        defaultOpen={activeFilterCount > 0}
+      >
         <div
           className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
           role="group"
@@ -727,7 +769,7 @@ export default function CorridorExplorer() {
             </p>
           </div>
         </div>
-      </div>
+      </CollapsibleSection>
 
       <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 shadow-sm">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">

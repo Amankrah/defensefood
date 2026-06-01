@@ -195,9 +195,10 @@ def run_dependency_pipeline(
             d = faostat.domestic_supply_kg(hs, dest, period)
             if p is not None:
                 production_kg = p
-                provenance = "faostat"
             if d is not None:
                 domestic_supply_kg = d
+            if p is not None or d is not None:
+                provenance = "faostat"
 
         # Skip corridors with no trade footprint and no production -> nothing to compute.
         if total_imports <= 0 and bilateral <= 0 and production_kg <= 0 and total_exports <= 0:

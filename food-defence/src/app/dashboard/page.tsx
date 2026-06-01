@@ -1,210 +1,179 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   AlertTriangle,
+  ArrowRight,
   Boxes,
+  Globe,
   Network,
-  Shield,
-  TrendingUp,
+  Search,
+  Sparkles,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type {
   CorridorMetric,
+  HazardBucket,
   OriginRisk,
   RasffSummary,
-  ScoringConfig,
 } from "@/lib/types";
-import { riskColor, fmt, truncate } from "@/lib/utils";
+import { fmt, fmtInt, riskColor, truncate } from "@/lib/utils";
 import MetricCard from "@/components/shared/MetricCard";
 import DataTable, { type Column } from "@/components/shared/DataTable";
-import HeatmapGrid from "@/components/shared/HeatmapGrid";
-import ScoreConfigPanel from "@/components/shared/ScoreConfigPanel";
+import { whyLine } from "@/lib/whyLine";
+import { actionFor } from "@/lib/actionHint";
 
-const CORRIDOR_COLS: Column<CorridorMetric>[] = [
+const ACTION_CHIP_TONE = {
+  high: "border-red-200 bg-red-50 text-red-700",
+  med: "border-orange-200 bg-orange-50 text-orange-700",
+  low: "border-slate-200 bg-slate-50 text-slate-600",
+} as const;
+
+const PROVENANCE_TICK = "FAOSTAT supply data used — full balance-sheet calculation.";
+const PROVENANCE_TRADE = "Trade-only estimate — domestic production not yet ingested.";
+
+const HAZARD_FAMILY_LABEL: Record<HazardBucket, string> = {
+  biological: "Microbial",
+  chem_pesticides: "Pesticide",
+  chem_heavy_metals: "Heavy metals",
+  chem_mycotoxins: "Mycotoxins",
+  chem_other: "Other chemical",
+  regulatory: "Labelling / regulatory",
+};
+
+const PRIORITY_COLS: Column<CorridorMetric>[] = [
   {
-    key: "origin_country",
-    label: "Origin",
-    headerDescription: "Exporting country for this commodity lane.",
+    key: "lane",
+    label: "Lane",
+    headerDescription: "Origin (exporter) → Destination (importer).",
     type: "string",
     render: (r) => (
-      <span className="font-medium text-slate-900">{r.origin_country}</span>
+      <div className="leading-tight">
+        <p className="text-sm font-semibold text-slate-900">
+          {r.origin_country} <span className="text-slate-400">→</span>{" "}
+          {r.destination_country}
+        </p>
+        <p className="text-[10px] text-slate-400">
+          {r.is_active_destination ? "Active destination" : "Passive mention"}
+        </p>
+      </div>
     ),
-  },
-  {
-    key: "destination_country",
-    label: "Destination",
-    headerDescription: "Importing country (often EU member state receiving goods).",
-    type: "string",
   },
   {
     key: "commodity_name",
     label: "Commodity",
-    headerDescription: "Product category (HS code prefix shown).",
+    headerDescription: "Product category at this HS prefix.",
     type: "string",
     render: (r) => (
-      <span title={r.commodity_name}>
-        <span className="mr-1 text-[10px] text-slate-400">{r.commodity_hs}</span>
-        {truncate(r.commodity_name, 25)}
-      </span>
-    ),
-  },
-  {
-    key: "his",
-    label: "Hazard",
-    headerDescription:
-      "Hazard intensity (HIS): relative strength of RASFF-linked signals on this lane. Higher means more alert-driven concern, not proof of incident.",
-    type: "number",
-    render: (r) => (
-      <span className={`font-mono font-semibold ${riskColor(r.his, 0.5)}`}>
-        {fmt(r.his)}
-      </span>
-    ),
-  },
-  {
-    key: "cvs",
-    label: "Priority",
-    headerDescription:
-      "Combined vulnerability score (CVS), 0 to 1: blends hazard, trade, and structural factors. Higher means review this corridor sooner.",
-    type: "number",
-    render: (r) => (
-      <span className={`font-mono ${riskColor(r.cvs ?? 0, 0.5)}`}>
-        {r.cvs != null ? fmt(r.cvs) : "-"}
-      </span>
-    ),
-  },
-  {
-    key: "notification_count",
-    label: "Alerts",
-    headerDescription: "Count of RASFF notifications associated with this corridor in the loaded window.",
-    type: "number",
-    render: (r) => (
-      <span className="font-mono text-slate-600">{r.notification_count}</span>
-    ),
-  },
-  {
-    key: "severity_total",
-    label: "Alert weight",
-    headerDescription:
-      "Sum of seriousness weights from notifications (classification and risk level). Higher means graver historical alerts, not current compliance.",
-    type: "number",
-    render: (r) => (
-      <span className="font-mono text-slate-600">{fmt(r.severity_total, 2)}</span>
-    ),
-  },
-];
-
-const DEPENDENCY_COLS: Column<CorridorMetric>[] = [
-  {
-    key: "origin_country",
-    label: "Origin",
-    headerDescription: "Supplying country the destination leans on for this commodity.",
-    type: "string",
-    render: (r) => <span className="font-medium text-slate-900">{r.origin_country}</span>,
-  },
-  {
-    key: "destination_country",
-    label: "Destination",
-    headerDescription: "Importing country whose supply depends on this origin.",
-    type: "string",
-  },
-  {
-    key: "commodity_name",
-    label: "Commodity",
-    headerDescription: "Product category (HS code prefix shown).",
-    type: "string",
-    render: (r) => (
-      <span title={r.commodity_name}>
-        <span className="mr-1 text-[10px] text-slate-400">{r.commodity_hs}</span>
+      <span className="text-xs text-slate-700">
+        <span className="mr-1 inline-block rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
+          {r.commodity_hs}
+        </span>
         {truncate(r.commodity_name, 22)}
       </span>
     ),
   },
   {
-    key: "sci",
-    label: "Criticality (SCI)",
+    key: "why",
+    label: "Why this lane",
     headerDescription:
-      "Supply criticality index (0–2): import reliance × origin share × supplier concentration. The headline 'how exposed' number.",
-    type: "number",
+      "Plain-language synthesis of the hazard and supply signals on this lane.",
+    type: "string",
+    sortable: false,
     render: (r) => (
-      <span className={`font-mono font-semibold ${riskColor(r.sci ?? 0, 1.0)}`}>
-        {r.sci != null ? fmt(r.sci) : "-"}
-        {r.sci != null && r.provenance !== "faostat" && (
-          <span className="ml-0.5 text-slate-400" title="Trade-only estimate (no production data yet)" aria-hidden>
-            ≈
+      <p className="max-w-md text-xs leading-snug text-slate-700">{whyLine(r)}</p>
+    ),
+  },
+  {
+    key: "cvs",
+    label: "Priority score",
+    headerDescription:
+      "Combined priority (CVS), 0–1. Blends supply criticality, hazard intensity, and demand pressure. Higher = act sooner.",
+    type: "number",
+    render: (r) => {
+      const tickProv =
+        r.cvs == null
+          ? null
+          : r.provenance === "faostat"
+            ? PROVENANCE_TICK
+            : PROVENANCE_TRADE;
+      return (
+        <div className="text-right">
+          <span
+            className={`font-mono text-sm font-semibold ${riskColor(r.cvs ?? 0, 0.75)}`}
+            title={tickProv ?? "Hazard-only fallback — structural inputs missing"}
+          >
+            {r.cvs != null ? fmt(r.cvs) : "—"}
           </span>
-        )}
-      </span>
-    ),
+          {r.cvs != null && r.provenance !== "faostat" && (
+            <p className="text-[9px] text-slate-400">trade-only</p>
+          )}
+        </div>
+      );
+    },
   },
   {
-    key: "idr",
-    label: "Import reliance (IDR)",
+    key: "action",
+    label: "Suggested action",
     headerDescription:
-      "Imports ÷ apparent domestic supply. >1 means imports exceed apparent supply (re-export hub or no production data).",
-    type: "number",
-    render: (r) => (
-      <span className={`font-mono ${r.idr_gt_1 ? "text-amber-600 font-semibold" : "text-slate-600"}`}>
-        {r.idr != null ? fmt(r.idr) : "-"}
-      </span>
-    ),
-  },
-  {
-    key: "ocs",
-    label: "Origin share (OCS)",
-    headerDescription: "Share of the destination's imports of this commodity that come from this single origin.",
-    type: "number",
-    render: (r) => (
-      <span className="font-mono text-slate-600">{r.ocs != null ? fmt(r.ocs) : "-"}</span>
-    ),
-  },
-  {
-    key: "hhi",
-    label: "Concentration (HHI)",
-    headerDescription:
-      "Supplier concentration (0–1): 1/n for n equal suppliers, 1 for a single supplier. ≥0.25 is highly concentrated.",
-    type: "number",
-    render: (r) => (
-      <span className={`font-mono ${(r.hhi ?? 0) >= 0.25 ? "text-orange-600" : "text-slate-600"}`}>
-        {r.hhi != null ? fmt(r.hhi) : "-"}
-      </span>
-    ),
+      "Heuristic hint based on score band, dominant hazard family, and supplier concentration. A planner's prompt — not a directive.",
+    type: "string",
+    sortable: false,
+    render: (r) => {
+      const a = actionFor(r);
+      return (
+        <span
+          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${ACTION_CHIP_TONE[a.tone]}`}
+          title={a.reason}
+        >
+          {a.label}
+        </span>
+      );
+    },
   },
 ];
 
-export default function CommandCentre() {
+function aggregateHazardFamilies(rows: CorridorMetric[]): {
+  key: HazardBucket;
+  label: string;
+  count: number;
+}[] {
+  const tally = new Map<HazardBucket, number>();
+  for (const r of rows) {
+    const b = r.hazard_breakdown;
+    if (!b) continue;
+    (Object.entries(b) as [HazardBucket, number | undefined][]).forEach(
+      ([k, v]) => {
+        if ((v ?? 0) > 0) tally.set(k, (tally.get(k) ?? 0) + (v ?? 0));
+      }
+    );
+  }
+  return [...tally.entries()]
+    .map(([k, v]) => ({ key: k, label: HAZARD_FAMILY_LABEL[k], count: v }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export default function Today() {
   const router = useRouter();
   const [summary, setSummary] = useState<RasffSummary | null>(null);
-  const [corridors, setCorridors] = useState<CorridorMetric[]>([]);
   const [allCorridors, setAllCorridors] = useState<CorridorMetric[]>([]);
-  const [networkStats, setNetworkStats] = useState({ node_count: 0, edge_count: 0 });
-  const [scoringConfig, setScoringConfig] = useState<ScoringConfig | null>(null);
-  const [scoring, setScoring] = useState(false);
+  const [topOrigins, setTopOrigins] = useState<OriginRisk[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [topOrigins, setTopOrigins] = useState<OriginRisk[]>([]);
-  const [topDependency, setTopDependency] = useState<CorridorMetric[]>([]);
 
   useEffect(() => {
     async function load() {
       try {
-        const [summ, top, net, cfg, all, origins, dep] = await Promise.all([
+        const [summ, all, origins] = await Promise.all([
           api.hazards.summary(),
-          api.corridors.top(20, "his"),
-          api.network.summary(),
-          api.scoring.config(),
           api.corridors.list("limit=1000"),
-          api.network.origins(12),
-          api.corridors.top(15, "sci"),
+          api.network.origins(10),
         ]);
         setSummary(summ);
-        setCorridors(top.corridors);
-        setNetworkStats(net);
-        setScoringConfig(cfg);
         setAllCorridors(all.corridors);
         setTopOrigins(origins.origins);
-        setTopDependency(dep.corridors.filter((c) => c.sci != null));
       } catch (e) {
         setError(e instanceof Error ? e.message : "API connection failed");
       } finally {
@@ -214,20 +183,37 @@ export default function CommandCentre() {
     load();
   }, []);
 
-  async function handleRecalculate(config: ScoringConfig) {
-    setScoring(true);
-    try {
-      const result = await api.scoring.recalculate(config);
-      setScoringConfig(config);
-      const top = result.corridors.slice(0, 20);
-      setCorridors(top);
-      setAllCorridors(result.corridors);
-      const origins = await api.network.origins(12);
-      setTopOrigins(origins.origins);
-    } finally {
-      setScoring(false);
-    }
-  }
+  const cvsAvailable = useMemo(
+    () => allCorridors.some((c) => c.cvs != null),
+    [allCorridors]
+  );
+
+  const priorityRows = useMemo(() => {
+    const sorted = [...allCorridors].sort((a, b) => {
+      const av = (cvsAvailable ? a.cvs : a.his) ?? 0;
+      const bv = (cvsAvailable ? b.cvs : b.his) ?? 0;
+      return bv - av;
+    });
+    return sorted.slice(0, 25);
+  }, [allCorridors, cvsAvailable]);
+
+  const hazardFamilies = useMemo(
+    () => aggregateHazardFamilies(allCorridors).slice(0, 5),
+    [allCorridors]
+  );
+
+  const totalFamilyCount =
+    hazardFamilies.reduce((s, x) => s + x.count, 0) || 1;
+
+  const depCorridors = allCorridors.filter((c) => c.sci != null);
+  const concentrated = depCorridors.filter((c) => (c.hhi ?? 0) >= 0.25).length;
+  const noFallback = depCorridors.filter(
+    (c) => c.idr_gt_1 || (c.ssr != null && (c.ssr ?? 1) < 0.1)
+  ).length;
+  const highPriority = allCorridors.filter((c) => (c.cvs ?? 0) >= 0.5).length;
+  const topSci = [...depCorridors]
+    .sort((a, b) => (b.sci ?? 0) - (a.sci ?? 0))
+    .slice(0, 5);
 
   if (loading) {
     return (
@@ -246,271 +232,303 @@ export default function CommandCentre() {
         <p className="mt-4 rounded-lg bg-white/60 px-3 py-2 text-xs text-red-600">
           Start the backend:{" "}
           <code className="rounded bg-red-100/80 px-1.5 py-0.5 font-mono text-[11px] text-red-800">
-            cd backend && PYTHONPATH=. uvicorn defensefood.api.main:app --port 8000
+            cd backend && uvicorn defensefood.api.main:app --port 8000
           </code>
         </p>
       </div>
     );
   }
 
-  // Fall back to HIS-based thresholds when structural CVS isn't available.
-  const cvsAvailable = allCorridors.some((c) => c.cvs != null);
-  const flagged = cvsAvailable
-    ? allCorridors.filter((c) => (c.cvs ?? 0) > 0.3).length
-    : allCorridors.filter((c) => c.his >= 0.5).length;
-  const maxHeadlineScore = cvsAvailable
-    ? allCorridors.reduce((m, c) => Math.max(m, c.cvs ?? 0), 0)
-    : allCorridors.reduce((m, c) => Math.max(m, c.his), 0);
-  const headlineScoreLabel = cvsAvailable
-    ? "Highest priority score (CVS)"
-    : "Highest hazard intensity (HIS)";
-  const flaggedLabel = cvsAvailable
-    ? "Corridors above review threshold"
-    : "Corridors with hazard intensity \u2265 0.5";
-  const flaggedSubtext = cvsAvailable
-    ? `Priority score (CVS) above 0.3, out of ${allCorridors.length} loaded`
-    : `Hazard signal (HIS) at or above 0.5, out of ${allCorridors.length} loaded`;
-  const headlineScoreSubtext = cvsAvailable
-    ? "Top combined vulnerability (CVS) across all corridors"
-    : "Top hazard intensity. Structural inputs (CVS) not yet connected; ranking by RASFF signal only.";
-  const density =
-    networkStats.node_count > 0
-      ? networkStats.edge_count / (networkStats.node_count * networkStats.node_count)
-      : 0;
-
-  // ── Commodity dependency (Section 2) story stats ──
-  const depCorridors = allCorridors.filter((c) => c.sci != null);
-  const depCount = depCorridors.length;
-  const concentratedCount = depCorridors.filter((c) => (c.hhi ?? 0) >= 0.25).length;
-  const idrFlaggedCount = depCorridors.filter((c) => c.idr_gt_1).length;
-  const maxSci = depCorridors.reduce((m, c) => Math.max(m, c.sci ?? 0), 0);
-  const anyFaostat = depCorridors.some((c) => c.provenance === "faostat");
-
   return (
-    <div className="mx-auto max-w-7xl space-y-8">
+    <div className="mx-auto max-w-7xl space-y-6">
+      {/* Header */}
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-600/90">
-            Decision overview
+            Inspection planner
           </p>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Dashboard</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+            Today
+          </h1>
           <p className="mt-1 max-w-xl text-sm text-slate-600">
-            You are viewing{" "}
-            <span className="font-mono font-semibold text-slate-800">{allCorridors.length}</span>{" "}
-            commodity trade corridors. Use the heatmap for patterns, adjust scoring if your risk
-            policy shifts, then open a row for full diagnostics.
+            The lanes that should get your sampling and inspection capacity this
+            period. Each row carries a plain-language reason and a suggested
+            next step — confirm with your own controls before acting.
+          </p>
+        </div>
+        <div className="text-right text-[11px] text-slate-500">
+          <p>
+            <span className="font-mono font-semibold text-slate-700">
+              {allCorridors.length}
+            </span>{" "}
+            corridors loaded
+          </p>
+          <p>
+            <span className="font-mono font-semibold text-slate-700">
+              {fmtInt(summary?.total_notifications ?? 0)}
+            </span>{" "}
+            RASFF alerts in window
           </p>
         </div>
       </div>
 
       {!cvsAvailable && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-          <span className="font-semibold">Structural inputs not connected.</span>{" "}
-          Priority score (CVS) combines structural dependency (SCI) and consumption demand (CRS)
-          with hazard signals. Until bilateral import data and consumption statistics are wired in,
-          corridors are ranked by hazard intensity (HIS) alone.
+          <span className="font-semibold">Hazard-only ranking.</span> The
+          combined priority score (CVS) blends supply criticality (SCI) and
+          consumption rank (CRS) with hazard intensity (HIS). Until bilateral
+          trade and consumption data are loaded for every lane, the queue is
+          sorted by hazard intensity alone.
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* KPI tiles — three numbers a planner cares about. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <MetricCard
-          label={flaggedLabel}
-          value={flagged}
+          label={cvsAvailable ? "Lanes above review threshold" : "High-hazard lanes (HIS ≥ 0.5)"}
+          value={cvsAvailable ? highPriority : allCorridors.filter((c) => c.his >= 0.5).length}
           icon={AlertTriangle}
           color="bg-red-500"
-          subtext={flaggedSubtext}
+          subtext={
+            cvsAvailable
+              ? "Priority score ≥ 0.5 — these should get a closer look this period."
+              : "Alert pattern strong enough to warrant follow-up regardless of supply context."
+          }
         />
         <MetricCard
-          label={headlineScoreLabel}
-          value={fmt(maxHeadlineScore)}
-          icon={Shield}
-          color="bg-orange-500"
-          subtext={headlineScoreSubtext}
-        />
-        <MetricCard
-          label="RASFF alerts in dataset"
-          value={summary?.total_notifications ?? 0}
-          icon={TrendingUp}
-          color="bg-blue-500"
-          subtext={`${summary?.notification_objects_built ?? 0} records shaped into corridor objects`}
-        />
-        <MetricCard
-          label="Network connectivity"
-          value={fmt(density, 4)}
+          label="Single-source lanes"
+          value={concentrated}
           icon={Network}
-          color="bg-purple-500"
-          subtext={`Share of possible country links that exist: ${networkStats.edge_count} active ties among ${networkStats.node_count} countries (higher = busier map)`}
+          color="bg-orange-500"
+          subtext={`Supplier concentration ≥ 0.25 — limited fallback if one supplier fails. Out of ${depCorridors.length} with a dependency profile.`}
+        />
+        <MetricCard
+          label="No domestic cushion"
+          value={noFallback}
+          icon={Boxes}
+          color="bg-amber-500"
+          subtext="Imports exceed apparent supply, or local production is essentially zero. Disruption-sensitive."
         />
       </div>
 
-      {/* ── Commodity dependency (Section 2) story ── */}
-      <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm">
-        <div className="mb-1 flex items-center gap-2">
-          <Boxes size={16} className="text-blue-600" aria-hidden />
-          <h2 className="text-sm font-semibold text-slate-900">
-            Commodity dependency — how exposed is supply?
-          </h2>
-        </div>
-        <p className="mb-4 max-w-3xl text-xs leading-relaxed text-slate-600">
-          Hazard tells you which lanes have a troubled track record.{" "}
-          <span className="font-medium text-slate-800">
-            Dependency tells you how exposed you’d be if a lane were disrupted
-          </span>{" "}
-          — how much of a destination’s supply of a commodity rides on a single origin, and how
-          concentrated that sourcing is. A lane can be quiet but single-sourced (a hidden
-          chokepoint), or noisy but easily replaced. The priority score (CVS) peaks when a lane is{" "}
-          <span className="font-medium text-slate-800">both</span> high-dependency and high-hazard.
-        </p>
-
-        {depCount === 0 ? (
-          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500">
-            Dependency metrics need bilateral trade data, none of which is loaded yet. Run the
-            all-partners Comtrade fetch and restart the API to populate SCI/IDR/OCS/HHI here.
-          </div>
-        ) : (
-          <>
-            <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <MetricCard
-                label="Lanes with a dependency profile"
-                value={depCount}
-                icon={Boxes}
-                color="bg-blue-500"
-                subtext={`of ${allCorridors.length} corridors; the rest await trade data`}
-              />
-              <MetricCard
-                label="Highly concentrated sourcing"
-                value={concentratedCount}
-                icon={Network}
-                color="bg-orange-500"
-                subtext="HHI ≥ 0.25 — few suppliers, little fallback if one fails"
-              />
-              <MetricCard
-                label="Imports exceed supply (IDR > 1)"
-                value={idrFlaggedCount}
-                icon={AlertTriangle}
-                color="bg-amber-500"
-                subtext="Re-export / trade-hub lanes, or production data still missing"
-              />
-              <MetricCard
-                label="Most critical lane (max SCI)"
-                value={fmt(maxSci)}
-                icon={Shield}
-                color="bg-red-500"
-                subtext="Supply criticality index, scale 0–2"
-              />
-            </div>
-
-            <div className="mb-4 grid gap-1.5 rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2.5 text-[11px] leading-relaxed text-slate-600 sm:grid-cols-2">
-              <p>
-                <span className="font-semibold text-slate-800">IDR</span> — import reliance: imports
-                as a share of apparent supply (&gt;1 = imports exceed it).
-              </p>
-              <p>
-                <span className="font-semibold text-slate-800">OCS</span> — origin share: how much
-                of imports come from this one origin.
-              </p>
-              <p>
-                <span className="font-semibold text-slate-800">HHI</span> — supplier concentration:
-                0 spread across many, 1 a single supplier.
-              </p>
-              <p>
-                <span className="font-semibold text-slate-800">SCI</span> — criticality: the
-                composite of the three (0–2); the headline exposure number.
-              </p>
-            </div>
-
-            <h3 className="mb-1 text-xs font-semibold text-slate-800">
-              Most critical supply dependencies
-            </h3>
-            <p className="mb-3 text-[11px] text-slate-500">
-              Ranked by SCI across all corridors.{" "}
-              {anyFaostat
-                ? ""
-                : "All currently trade-only estimates (≈) — DS′ = imports − exports until FAOSTAT production lands. "}
-              Click a lane for the full breakdown.
+      {/* Priority queue (hero). */}
+      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm">
+        <div className="mb-3 flex items-baseline justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">
+              Top priority lanes this period
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Ranked by{" "}
+              {cvsAvailable ? "combined priority score (CVS)" : "hazard intensity (HIS)"}{" "}
+              · top {priorityRows.length} of {allCorridors.length} · click a row
+              for the full forensic report.
             </p>
-            <DataTable
-              columns={DEPENDENCY_COLS}
-              data={topDependency}
-              onRowClick={(c) =>
-                router.push(
-                  `/dashboard/corridors/${c.commodity_hs}/${c.destination_m49}/${c.origin_m49}`
-                )
-              }
-              pageSize={10}
-            />
-          </>
-        )}
-      </div>
-
-      {topOrigins.length > 0 && (
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm">
-          <h2 className="mb-1 text-sm font-semibold text-slate-900">
-            Exporting countries with the strongest outbound hazard signals
-          </h2>
-          <p className="mb-3 text-xs text-slate-600">
-            Total hazard intensity (HIS) summed over corridors where each country is the origin.
-            Open a country to see ORPS by commodity (framework Sec. 6.2).
-          </p>
-          <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {topOrigins.map((o) => (
-              <li key={o.origin_m49}>
-                <button
-                  type="button"
-                  onClick={() => router.push(`/dashboard/countries/${o.origin_m49}`)}
-                  className="flex w-full items-center justify-between rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-left text-sm transition hover:border-slate-200 hover:bg-slate-50"
-                >
-                  <span className="font-medium text-slate-900">{o.name || o.origin_m49}</span>
-                  <span className="font-mono text-xs text-slate-600">{fmt(o.total_his, 3)}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          </div>
+          <Link
+            href="/dashboard/corridors"
+            className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800"
+          >
+            See all corridors <ArrowRight size={12} aria-hidden />
+          </Link>
         </div>
-      )}
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:gap-8">
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm lg:col-span-2">
-          <h2 className="mb-1 text-sm font-semibold text-slate-900">
-            Where hazard signals concentrate
-          </h2>
-          <p className="mb-4 text-xs text-slate-500">
-            Each cell is an origin country and HS chapter pair. Darker means stronger hazard
-            intensity (HIS) in the data. Hover a cell for the exact value.
-          </p>
-          <HeatmapGrid corridors={allCorridors} maxRows={12} maxCols={10} />
-        </div>
-
-        <div className="min-w-0">
-          {scoringConfig && (
-            <ScoreConfigPanel
-              config={scoringConfig}
-              onRecalculate={handleRecalculate}
-              loading={scoring}
-            />
-          )}
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm">
-        <h2 className="mb-1 text-sm font-semibold text-slate-900">
-          Corridors with strongest hazard signals
-        </h2>
-        <p className="mb-4 text-xs text-slate-500">
-          Sorted by hazard intensity (HIS). Column headers have short explanations on hover. Click a
-          row for trade, dependency, and priority breakdown.
-        </p>
         <DataTable
-          columns={CORRIDOR_COLS}
-          data={corridors}
+          columns={PRIORITY_COLS}
+          data={priorityRows}
           onRowClick={(c) =>
             router.push(
               `/dashboard/corridors/${c.commodity_hs}/${c.destination_m49}/${c.origin_m49}`
             )
           }
-          pageSize={20}
+          pageSize={10}
         />
-      </div>
+      </section>
+
+      {/* Two-column summary: structural exposure + hazard activity. */}
+      <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        {/* Structural exposure */}
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm">
+          <div className="mb-1 flex items-center gap-2">
+            <Boxes size={15} className="text-blue-600" aria-hidden />
+            <h2 className="text-sm font-semibold text-slate-900">
+              Structural exposure
+            </h2>
+          </div>
+          <p className="mb-4 text-[11px] text-slate-500">
+            How exposed supply would be if a lane were disrupted — independent
+            of whether RASFF has flagged anything.
+          </p>
+
+          {topSci.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500">
+              Dependency metrics need bilateral trade data. Run the all-partners
+              Comtrade fetch and restart the API to populate this section.
+            </p>
+          ) : (
+            <>
+              <ul className="divide-y divide-slate-100 text-sm">
+                {topSci.map((c) => (
+                  <li key={`${c.commodity_hs}-${c.destination_m49}-${c.origin_m49}`}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        router.push(
+                          `/dashboard/corridors/${c.commodity_hs}/${c.destination_m49}/${c.origin_m49}`
+                        )
+                      }
+                      className="grid w-full grid-cols-[1fr_auto] items-baseline gap-3 py-2 text-left hover:bg-slate-50"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-medium text-slate-800">
+                          {c.origin_country} → {c.destination_country}
+                        </p>
+                        <p className="truncate text-[10px] text-slate-500">
+                          {truncate(c.commodity_name, 36)}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className={`font-mono text-sm font-semibold ${riskColor(c.sci ?? 0, 1.5)}`}>
+                          {fmt(c.sci ?? 0)}
+                        </p>
+                        <p className="text-[9px] uppercase tracking-wide text-slate-400">
+                          criticality
+                        </p>
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <Link
+                href="/dashboard/corridors?sort_by=sci"
+                className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800"
+              >
+                Sort all corridors by criticality <ArrowRight size={12} aria-hidden />
+              </Link>
+            </>
+          )}
+        </div>
+
+        {/* Hazard activity */}
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm">
+          <div className="mb-1 flex items-center gap-2">
+            <AlertTriangle size={15} className="text-red-500" aria-hidden />
+            <h2 className="text-sm font-semibold text-slate-900">
+              Hazard activity
+            </h2>
+          </div>
+          <p className="mb-4 text-[11px] text-slate-500">
+            What official RASFF notifications are saying right now.
+          </p>
+
+          {hazardFamilies.length === 0 ? (
+            <p className="text-xs text-slate-500">No categorised RASFF data in window.</p>
+          ) : (
+            <>
+              <p className="mb-2 text-[11px] font-medium text-slate-600">
+                Hazard families across {fmtInt(summary?.total_notifications ?? 0)} alerts
+              </p>
+              <ul className="mb-4 space-y-1.5">
+                {hazardFamilies.map((f) => {
+                  const pct = (f.count / totalFamilyCount) * 100;
+                  return (
+                    <li key={f.key}>
+                      <div className="flex items-center justify-between gap-3 text-xs">
+                        <span className="text-slate-700">{f.label}</span>
+                        <span className="font-mono text-[11px] text-slate-500">
+                          {fmt(f.count, 0)} ({pct.toFixed(0)}%)
+                        </span>
+                      </div>
+                      <div className="mt-0.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full bg-red-400"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              {topOrigins.length > 0 && (
+                <>
+                  <p className="mb-2 text-[11px] font-medium text-slate-600">
+                    Top exporters by outbound hazard signal
+                  </p>
+                  <ul className="grid gap-1.5 sm:grid-cols-2">
+                    {topOrigins.slice(0, 6).map((o) => (
+                      <li key={o.origin_m49}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            router.push(`/dashboard/countries/${o.origin_m49}`)
+                          }
+                          className="flex w-full items-center justify-between gap-2 rounded-md border border-slate-100 bg-slate-50/80 px-2 py-1.5 text-left text-xs transition hover:border-slate-200 hover:bg-slate-50"
+                        >
+                          <span className="truncate text-slate-800">
+                            {o.name || o.origin_m49}
+                          </span>
+                          <span className="font-mono text-[11px] text-slate-500">
+                            {fmt(o.total_his, 2)}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </section>
+
+      {/* Deeper exploration links */}
+      <section className="rounded-2xl border border-slate-200/70 bg-slate-50/50 px-5 py-4">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          Look deeper
+        </p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <Link
+            href="/dashboard/corridors"
+            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:border-blue-300 hover:bg-blue-50"
+          >
+            <Search size={14} className="text-blue-600" aria-hidden />
+            <span>
+              <span className="block font-medium text-slate-900">
+                Investigate corridors
+              </span>
+              <span className="text-[10px] text-slate-500">
+                Filter every lane, export to CSV
+              </span>
+            </span>
+          </Link>
+          <Link
+            href="/dashboard/patterns"
+            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:border-blue-300 hover:bg-blue-50"
+          >
+            <Sparkles size={14} className="text-blue-600" aria-hidden />
+            <span>
+              <span className="block font-medium text-slate-900">Patterns</span>
+              <span className="text-[10px] text-slate-500">
+                Heatmap and scoring weights
+              </span>
+            </span>
+          </Link>
+          <Link
+            href="/dashboard/network"
+            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:border-blue-300 hover:bg-blue-50"
+          >
+            <Globe size={14} className="text-blue-600" aria-hidden />
+            <span>
+              <span className="block font-medium text-slate-900">
+                Trade network
+              </span>
+              <span className="text-[10px] text-slate-500">
+                Country graph
+              </span>
+            </span>
+          </Link>
+        </div>
+      </section>
     </div>
   );
 }

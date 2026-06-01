@@ -122,7 +122,10 @@ function buildFlowNodes(graph: NetworkGraph): Node[] {
   return out;
 }
 
-function buildFlowEdges(graph: NetworkGraph): Edge<FlowEdgeData>[] {
+function buildFlowEdges(
+  graph: NetworkGraph,
+  priorityPairs: Set<string>
+): Edge<FlowEdgeData>[] {
   const maxHis = Math.max(...graph.edges.map((e) => e.his), 0.001);
 
   const edgeMap = new Map<string, { his: number; count: number }>();
@@ -141,17 +144,25 @@ function buildFlowEdges(graph: NetworkGraph): Edge<FlowEdgeData>[] {
     const [source, target] = key.split("-");
     const thickness = Math.max(1, Math.min(5, (his / maxHis) * 4 + 1));
     const relHis = his / maxHis;
+    const isPriority = priorityPairs.has(key);
     return {
       id: key,
       source,
       target,
       data: { his, relHis, corridorCount: count },
-      style: {
-        stroke: riskHex(his, maxHis),
-        strokeWidth: thickness,
-        opacity: 0.12 + relHis * 0.88,
-      },
-      animated: relHis > 0.5,
+      style: isPriority
+        ? {
+            stroke: "#4f46e5",
+            strokeWidth: Math.max(thickness, 3),
+            opacity: 0.9,
+            strokeDasharray: "0",
+          }
+        : {
+            stroke: riskHex(his, maxHis),
+            strokeWidth: thickness,
+            opacity: 0.12 + relHis * 0.88,
+          },
+      animated: isPriority || relHis > 0.5,
       interactionWidth: 16,
     };
   });
@@ -166,14 +177,28 @@ export default function ExposureNetworkPage() {
   /** Minimum relative link strength 0–100 (HIS / max HIS in view). Hides weaker links to reduce clutter. */
   const [linkFloorPct, setLinkFloorPct] = useState(0);
   const [edgeHint, setEdgeHint] = useState<string | null>(null);
+  /** Lane keys (`${origin_m49}-${dest_m49}`) for the current top-priority queue. */
+  const [priorityPairs, setPriorityPairs] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     Promise.all([
       api.network.graph(),
       api.commodities.list(),
-    ]).then(([g, c]) => {
+      // Best-effort fetch of top-priority lanes; failure leaves the highlight empty.
+      api.corridors
+        .top(25, "cvs")
+        .catch(() => api.corridors.top(25, "his"))
+        .catch(() => ({ corridors: [] as { origin_m49: number; destination_m49: number }[] })),
+    ]).then(([g, c, pri]) => {
       setGraph(g);
       setCommodities(c.commodities);
+      setPriorityPairs(
+        new Set(
+          (pri.corridors ?? []).map(
+            (row) => `${row.origin_m49}-${row.destination_m49}`
+          )
+        )
+      );
       setLoading(false);
     });
   }, []);
@@ -205,8 +230,8 @@ export default function ExposureNetworkPage() {
   const onEdgeMouseLeave = useCallback(() => setEdgeHint(null), []);
 
   const allEdges = useMemo(
-    () => (graph ? buildFlowEdges(graph) : []),
-    [graph]
+    () => (graph ? buildFlowEdges(graph, priorityPairs) : []),
+    [graph, priorityPairs]
   );
 
   const visibleEdges = useMemo(() => {
@@ -234,13 +259,19 @@ export default function ExposureNetworkPage() {
     <div className="flex flex-col" style={{ height: "calc(100vh - 7rem)" }}>
       <div className="mb-3 flex flex-shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-lg font-bold text-slate-900">Trade and hazard network</h1>
-          <p className="max-w-2xl text-xs text-slate-600">
-            {graph.node_count} countries and {graph.edge_count} corridor links in this view (edges
-            point from exporter to importer). Node size reflects aggregate HIS on all rows involving
-            that country (as origin or destination). Edge colour and thickness reflect merged hazard
-            intensity (HIS) for that country pair. Same country can be both EU and in multiple roles:
-            colour only indicates EU membership. Click a country for its profile.
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-600/90">
+            Exploration
+          </p>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">
+            Trade &amp; hazard network
+          </h1>
+          <p className="mt-1 max-w-2xl text-xs text-slate-600">
+            <span className="font-medium text-slate-800">How to read this:</span> nodes
+            are countries, edges run from exporter to importer. Edge warmth and
+            thickness reflect merged hazard intensity (HIS) for the lane.
+            Lanes appearing in this period&apos;s top-priority queue are drawn
+            in indigo. {graph.node_count} countries, {graph.edge_count} corridor links shown. Click a
+            country for its snapshot.
           </p>
         </div>
 
@@ -303,6 +334,10 @@ export default function ExposureNetworkPage() {
           <span className="flex items-center gap-1.5">
             <span className="h-0.5 w-5 bg-red-500" />
             Warmer / thicker link: higher merged HIS
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-0.5 w-5 bg-indigo-600" />
+            Indigo link: in this period&apos;s top-priority queue
           </span>
         </div>
       </div>

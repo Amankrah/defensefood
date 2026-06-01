@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
   AlertTriangle,
-  Package,
+  Boxes,
+  Scale,
   Shield,
   TrendingUp,
 } from "lucide-react";
@@ -21,27 +22,44 @@ import {
   Cell,
 } from "recharts";
 import { api } from "@/lib/api";
-import type { CorridorProfile, TradeFlowMetrics } from "@/lib/types";
-import { fmt, fmtPct } from "@/lib/utils";
-import type { HazardBreakdown } from "@/lib/types";
-import MetricCard from "@/components/shared/MetricCard";
-import GaugeChart from "@/components/shared/GaugeChart";
-import RadarChart from "@/components/shared/RadarChart";
-import ScoreBar from "@/components/shared/ScoreBar";
+import type {
+  CorridorProfile,
+  HazardBreakdown,
+  HazardBucket,
+  TradeFlowMetrics,
+} from "@/lib/types";
+import { fmt, fmtInt, fmtPct } from "@/lib/utils";
+import {
+  interpretCvs,
+  interpretHdi,
+  interpretHhi,
+  interpretHis,
+  interpretIdr,
+  interpretOcs,
+  interpretSci,
+  interpretSsr,
+  interpretZuv,
+  interpretMtd,
+  interpretDeltaHhi,
+  bandClasses,
+  type Band,
+} from "@/lib/interpret";
+import { actionFor } from "@/lib/actionHint";
+import MetricTile from "@/components/shared/MetricTile";
+import VerdictBanner from "@/components/shared/VerdictBanner";
 import { RolePills } from "@/components/shared/RolePill";
 
-/** Inline component: 6-category bar showing which hazard families dominate a corridor. */
 const HAZARD_CATS: {
-  key: keyof HazardBreakdown;
+  key: HazardBucket;
   label: string;
   color: string;
 }[] = [
-  { key: "biological", label: "Biological", color: "#10b981" },
-  { key: "chem_pesticides", label: "Pesticides", color: "#84cc16" },
+  { key: "biological", label: "Microbial", color: "#10b981" },
+  { key: "chem_pesticides", label: "Pesticide", color: "#84cc16" },
   { key: "chem_heavy_metals", label: "Heavy metals", color: "#f59e0b" },
   { key: "chem_mycotoxins", label: "Mycotoxins", color: "#f97316" },
-  { key: "chem_other", label: "Other chem.", color: "#ef4444" },
-  { key: "regulatory", label: "Regulatory", color: "#8b5cf6" },
+  { key: "chem_other", label: "Other chemical", color: "#ef4444" },
+  { key: "regulatory", label: "Labelling / regulatory", color: "#8b5cf6" },
 ];
 
 function HazardBreakdownBar({ breakdown }: { breakdown: HazardBreakdown }) {
@@ -56,9 +74,9 @@ function HazardBreakdownBar({ breakdown }: { breakdown: HazardBreakdown }) {
   return (
     <div className="mt-4">
       <p className="mb-2 text-xs font-medium text-slate-500">
-        Hazard mix (how {haztotal(total)} categorised alerts split across families)
+        Hazard family mix across {total.toFixed(total >= 10 ? 0 : 1)} categorised alerts
       </p>
-      <div className="flex h-6 overflow-hidden rounded-lg bg-slate-100">
+      <div className="flex h-5 overflow-hidden rounded-lg bg-slate-100">
         {HAZARD_CATS.map((c) => {
           const v = breakdown[c.key] ?? 0;
           if (v <= 0) return null;
@@ -94,11 +112,44 @@ function HazardBreakdownBar({ breakdown }: { breakdown: HazardBreakdown }) {
   );
 }
 
-function haztotal(v: number): string {
-  return v.toFixed(v >= 10 ? 0 : 1);
+const STEP_BADGE = "inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-100 px-1.5 text-[10px] font-semibold text-blue-700";
+
+function StepHeader({
+  step,
+  title,
+  description,
+  icon: Icon,
+  iconColor = "text-blue-500",
+}: {
+  step: number;
+  title: string;
+  description: string;
+  icon: typeof Shield;
+  iconColor?: string;
+}) {
+  return (
+    <header className="mb-3 flex items-start gap-3">
+      <span className={STEP_BADGE}>{step}</span>
+      <div className="flex-1">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <Icon size={15} className={iconColor} aria-hidden />
+          {title}
+        </h2>
+        <p className="text-[11px] text-slate-600">{description}</p>
+      </div>
+    </header>
+  );
 }
 
-export default function CorridorDeepDive() {
+function tonnes(kg: number | null | undefined): string {
+  if (kg == null || Number.isNaN(kg)) return "—";
+  if (kg >= 1_000_000_000) return `${(kg / 1_000_000_000).toFixed(2)} Mt`;
+  if (kg >= 1_000_000) return `${(kg / 1_000_000).toFixed(2)} kt`;
+  if (kg >= 1_000) return `${(kg / 1_000).toFixed(1)} t`;
+  return `${kg.toFixed(0)} kg`;
+}
+
+export default function LaneReport() {
   const params = useParams();
   const hs = params.hs as string;
   const dest = parseInt(params.dest as string);
@@ -119,42 +170,158 @@ export default function CorridorDeepDive() {
     });
   }, [hs, dest, origin]);
 
+  const dep = profile?.dependency;
+  const haz = profile?.hazard;
+
+  // Hazard verdict synthesis
+  const trackRecordVerdict = useMemo(() => {
+    if (!haz) return null;
+    const his = interpretHis(haz.his);
+    const hdi = interpretHdi(haz.hdi);
+    const count = haz.notification_count ?? 0;
+    if (count === 0)
+      return {
+        title: "Quiet so far",
+        body: "No RASFF notifications recorded on this exact corridor in the loaded period.",
+        band: "low" as Band,
+      };
+    const familyTop = haz.hazard_breakdown
+      ? HAZARD_CATS.map((c) => ({ ...c, v: haz.hazard_breakdown?.[c.key] ?? 0 })).sort(
+          (a, b) => b.v - a.v
+        )[0]
+      : null;
+    const familyTotal = haz.hazard_breakdown
+      ? Object.values(haz.hazard_breakdown).reduce((s, v) => s + (v ?? 0), 0)
+      : 0;
+    const famPart =
+      familyTop && familyTotal > 0
+        ? `${familyTop.label.toLowerCase()} ${familyTop.v >= familyTotal * 0.5 ? "dominates" : "leads"} the mix`
+        : null;
+    const body = [
+      `${count} alert${count === 1 ? "" : "s"} on this lane`,
+      famPart,
+      hdi.verdict.toLowerCase().replace(/\.$/, ""),
+    ]
+      .filter(Boolean)
+      .join("; ");
+    return {
+      title:
+        his.band === "high" || hdi.band === "high"
+          ? "Active history"
+          : "Some history",
+      body: `${body[0].toUpperCase()}${body.slice(1)}.`,
+      band: his.band,
+    };
+  }, [haz]);
+
+  // Supply verdict synthesis
+  const supplyVerdict = useMemo(() => {
+    if (!dep || "error" in dep) return null;
+    const idr = interpretIdr(dep.idr);
+    const ocs = interpretOcs(dep.ocs);
+    const hhi = interpretHhi(dep.hhi);
+    const ssr = interpretSsr(dep.ssr);
+    const bandList = [idr.band, ocs.band, hhi.band, ssr.band] as const;
+    const worst: Band = bandList.includes("high")
+      ? "high"
+      : bandList.includes("flag")
+        ? "flag"
+        : bandList.includes("med")
+          ? "med"
+          : "low";
+    const originCountry = profile?.origin_country ?? "this origin";
+    const destCountry = profile?.destination_country ?? "the destination";
+    const sentences: string[] = [];
+    if ((dep.ocs ?? 0) >= 0.5) {
+      sentences.push(
+        `${originCountry} supplies ${fmtPct(dep.ocs)} of ${destCountry}'s imports of this commodity.`
+      );
+    } else if ((dep.ocs ?? 0) > 0) {
+      sentences.push(
+        `${originCountry} contributes ${fmtPct(dep.ocs)} of ${destCountry}'s imports.`
+      );
+    }
+    if ((dep.ssr ?? 1) < 0.1 && !dep.idr_gt_1) {
+      sentences.push(`${destCountry} produces essentially none of it locally.`);
+    } else if (dep.idr_gt_1) {
+      sentences.push(
+        `Imports exceed apparent domestic supply — either ${destCountry} is a transit hub or production data is missing.`
+      );
+    }
+    if ((dep.hhi ?? 0) >= 0.5) {
+      sentences.push(`The supplier base is very concentrated (HHI ${fmt(dep.hhi)}).`);
+    } else if ((dep.hhi ?? 0) >= 0.25) {
+      sentences.push(`Supplier base is concentrated (HHI ${fmt(dep.hhi)}).`);
+    }
+    if (!sentences.length) sentences.push("Lane shows diversified supply with no concentration alarm.");
+    const title =
+      worst === "high"
+        ? "Concentrated dependency"
+        : worst === "flag"
+          ? "Data caveat — read with care"
+          : worst === "med"
+            ? "Some structural exposure"
+            : "Diversified supply";
+    return {
+      title,
+      body: sentences.join(" "),
+      band: worst,
+    };
+  }, [dep, profile?.origin_country, profile?.destination_country]);
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      <div className="flex h-64 items-center justify-center">
+        <div className="h-9 w-9 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
       </div>
     );
   }
 
   if (!profile || "error" in profile) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-xl p-6">
-        <p className="text-red-700">Corridor not found: {hs} / {dest} / {origin}</p>
+      <div className="rounded-xl border border-red-200 bg-red-50 p-6">
+        <p className="text-red-700">
+          Corridor not found: {hs} / {dest} / {origin}
+        </p>
       </div>
     );
   }
 
-  const dep = profile.dependency;
-  const haz = profile.hazard;
+  // Adapter: actionFor reads (cvs, his, ocs, hhi, hazard_breakdown) from a CorridorMetric.
+  // Build a minimal record that satisfies those reads from this profile.
+  const action = actionFor({
+    commodity_hs: profile.commodity_hs,
+    commodity_name: profile.commodity_name,
+    destination_m49: profile.destination_m49,
+    destination_country: profile.destination_country,
+    origin_m49: profile.origin_m49,
+    origin_country: profile.origin_country,
+    his: haz?.his ?? 0,
+    hdi: haz?.hdi ?? 0,
+    notification_count: haz?.notification_count ?? 0,
+    severity_total: haz?.severity_total ?? 0,
+    hazard_breakdown: haz?.hazard_breakdown,
+    ocs: dep && !("error" in dep) ? dep.ocs : null,
+    hhi: dep && !("error" in dep) ? dep.hhi : null,
+    cvs: profile.cvs ?? null,
+  });
 
-  // Radar data for composite score
-  const radarData = [
-    { axis: "SCI", value: profile.sci_norm ?? 0 },
-    { axis: "HIS", value: profile.his_norm ?? 0 },
-    { axis: "CRS", value: profile.crs_norm ?? 0 },
-    { axis: "PAS", value: 0 },
-    { axis: "SCCS", value: 0 },
-  ];
+  const cvsVerdict = interpretCvs(profile.cvs ?? null);
+  const cvsBandClasses = bandClasses(cvsVerdict.band);
 
-  // Score breakdown bar
-  const scoreSegments = [
-    { label: "SCI", value: profile.sci_norm ?? 0, color: "#3b82f6" },
-    { label: "HIS", value: profile.his_norm ?? 0, color: "#ef4444" },
-    { label: "CRS", value: profile.crs_norm ?? 0, color: "#8b5cf6" },
-  ];
+  // Score breakdown — only show spokes that have data.
+  const breakdown = [
+    { key: "sci", label: "Supply criticality", value: profile.sci_norm, color: "#3b82f6" },
+    { key: "his", label: "Hazard intensity", value: profile.his_norm, color: "#ef4444" },
+    { key: "crs", label: "Consumption rank", value: profile.crs_norm, color: "#8b5cf6" },
+  ].filter((b) => b.value != null && !Number.isNaN(b.value)) as {
+    key: string;
+    label: string;
+    value: number;
+    color: string;
+  }[];
+  const breakdownTotal = breakdown.reduce((s, b) => s + b.value, 0) || 1;
 
-  // Peer unit values for bar chart
   const peerUVs = (tradeFlow?.peer_unit_values ?? []).map((p) => ({
     partner: p.partnerCode,
     uv: p.unit_value,
@@ -163,144 +330,168 @@ export default function CorridorDeepDive() {
   }));
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex items-start gap-4">
+    <div className="mx-auto max-w-7xl space-y-5">
+      {/* Hero — headline + priority score */}
+      <header className="flex items-start gap-4">
         <Link
-          href="/dashboard/corridors"
-          className="mt-1 p-1.5 rounded-lg hover:bg-gray-100"
+          href="/dashboard"
+          className="mt-1 rounded-lg p-1.5 hover:bg-slate-100"
+          title="Back to Today"
         >
           <ArrowLeft size={16} />
         </Link>
-        <div>
-          <h1 className="text-lg font-bold text-gray-900">
-            {profile.origin_country} &rarr; {profile.destination_country}
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-600/90">
+            Lane forensic report
+          </p>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">
+            {profile.origin_country} <span className="text-slate-400">→</span>{" "}
+            {profile.destination_country}
           </h1>
-          <p className="text-sm text-gray-500">
-            <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded mr-2">
+          <p className="mt-0.5 text-xs text-slate-500">
+            <span className="mr-2 inline-block rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600">
               HS {profile.commodity_hs}
             </span>
             {profile.commodity_name}
           </p>
           {profile.destination_roles && profile.destination_roles.length > 0 && (
-            <div className="mt-2 flex items-center gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400">
                 Destination role
               </span>
               <RolePills roles={profile.destination_roles} />
               {profile.is_active_destination === false && (
                 <span className="text-[10px] italic text-slate-400">
-                  (passive mention only &mdash; no active response required)
+                  (passive mention — no active response required)
                 </span>
               )}
             </div>
           )}
         </div>
-      </div>
+      </header>
 
-      <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-        <div className="mb-1 flex items-start justify-between gap-2">
-          <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-            <Package size={15} className="text-blue-500" aria-hidden />
-            Supply dependency
-          </h2>
-          {dep && !("error" in dep) && (
+      {/* Headline priority card */}
+      <section
+        className={`rounded-2xl border p-5 shadow-sm ${cvsBandClasses.bg} ${cvsBandClasses.border}`}
+      >
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-[auto_1fr_auto] md:items-center">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Priority score
+            </p>
+            <p className={`font-mono text-4xl font-bold tracking-tight ${cvsBandClasses.text}`}>
+              {profile.cvs != null
+                ? fmt(profile.cvs)
+                : profile.cvs_hazard_only != null
+                  ? fmt(profile.cvs_hazard_only)
+                  : "—"}
+            </p>
+            <p className="text-[10px] text-slate-500">
+              {profile.cvs != null
+                ? "out of 1.000 (CVS)"
+                : "hazard-only fallback (CVS unavailable)"}
+            </p>
+          </div>
+          <div className="min-w-0">
+            <p className={`text-xs font-semibold uppercase tracking-wide ${cvsBandClasses.text}`}>
+              {cvsVerdict.verdict}
+            </p>
+            <p className="mt-1 text-sm text-slate-800">
+              {profile.cvs != null
+                ? profile.cvs_mode === "sci_crs_his"
+                  ? "Score blends supply criticality, hazard intensity, and consumption rank."
+                  : "Score blends supply criticality and hazard intensity (consumption data pending)."
+                : "Structural inputs are missing for this lane, so we fall back to a hazard-only signal. Use with caution."}
+            </p>
+          </div>
+          <div className="text-center md:text-right">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+              Suggested action
+            </p>
             <span
-              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
-                dep.provenance === "faostat"
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                  : "border-amber-200 bg-amber-50 text-amber-700"
+              className={`mt-1 inline-flex rounded-full border px-3 py-1 text-xs font-medium ${
+                action.tone === "high"
+                  ? "border-red-200 bg-white text-red-700"
+                  : action.tone === "med"
+                    ? "border-orange-200 bg-white text-orange-700"
+                    : "border-slate-200 bg-white text-slate-700"
               }`}
-              title={
-                dep.provenance === "faostat"
-                  ? "DS' uses FAOSTAT production + food balance sheets"
-                  : "No production data yet — DS' approximated as imports − exports"
-              }
+              title={action.reason}
             >
-              {dep.provenance === "faostat" ? "FAOSTAT balance sheet" : "Trade-only estimate"}
+              {action.label}
             </span>
-          )}
+            <p className="mt-1 max-w-[180px] text-[10px] text-slate-500">{action.reason}</p>
+          </div>
         </div>
-        <p className="mb-4 text-xs text-slate-600">
-          How much this destination relies on this origin for the commodity, and how concentrated
-          sourcing is. Use for lab planning and supplier oversight, not as a verdict on quality.
-        </p>
-        {dep && !("error" in dep) && dep.idr_gt_1 && (
-          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-            <span className="font-semibold">IDR &gt; 1</span> — imports exceed apparent domestic
-            supply. That points to a re-export / trade-hub lane, or simply the absence of production
-            data in trade-only mode. Read SSR and SCI with that in mind.
-          </div>
-        )}
-        {dep && !("error" in dep) ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-            <GaugeChart
-              value={dep.idr}
-              max={2}
-              label="IDR"
-              sublabel="Share of imports from this partner"
-            />
-            <GaugeChart value={dep.ocs} max={1} label="OCS" sublabel="Partner share of supply" />
-            <GaugeChart value={dep.hhi} max={1} label="HHI" sublabel="Market concentration" />
-            <MetricCard
-              label="BDI"
-              value={fmt(dep.bdi)}
-              subtext="Bilateral dependency: economic pull of this specific lane"
-            />
-            <MetricCard
-              label="SSR"
-              value={fmt(dep.ssr)}
-              subtext="Self-sufficiency ratio for the product in the destination"
-            />
-            <MetricCard
-              label="SCI"
-              value={fmt(dep.sci)}
-              subtext={`Structural criticality index, scaled to ${fmtPct(dep.sci_norm)} after normalisation`}
-              icon={Shield}
-              color="bg-blue-500"
-            />
-          </div>
-        ) : (
-          <p className="text-sm italic text-gray-400">
-            Dependency metrics need bilateral import statistics and production context for this
-            corridor. They will appear here once that data is loaded in the API.
-          </p>
-        )}
-      </div>
+      </section>
 
-      <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-1 text-sm font-semibold text-gray-900 flex items-center gap-2">
-          <AlertTriangle size={15} className="text-red-500" aria-hidden />
-          Hazard signals (RASFF)
-        </h2>
-        <p className="mb-4 text-xs text-slate-600">
-          What official food safety notifications say about this lane. Higher values mean more
-          alert activity or weight; they support triage, not automatic enforcement.
-        </p>
+      {profile.cvs == null && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+          <span className="font-semibold">CVS unavailable.</span> Missing inputs:{" "}
+          <span className="font-mono">
+            {(profile.cvs_missing_inputs ?? ["sci_norm", "crs_norm"]).join(", ")}
+          </span>
+          . The hazard-only fallback gives you a ranking; the structural picture below is still
+          worth reading.
+        </div>
+      )}
+
+      {/* Step 1 — Track record (Hazard) */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <StepHeader
+          step={1}
+          title="The track record"
+          description="What official RASFF notifications say about this lane."
+          icon={AlertTriangle}
+          iconColor="text-red-500"
+        />
+
         {haz ? (
           <>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <MetricCard
-                label="Hazard intensity (HIS)"
-                value={fmt(haz.his)}
-                subtext="Severity-weighted, time-decayed RASFF signal on this lane"
+            {trackRecordVerdict && (
+              <VerdictBanner
+                title={trackRecordVerdict.title}
+                body={trackRecordVerdict.body}
+                band={trackRecordVerdict.band}
                 icon={AlertTriangle}
-                color="bg-red-500"
               />
-              <MetricCard
-                label="Hazard diversity (HDI)"
-                value={fmt(haz.hdi)}
-                subtext="Shannon entropy over 6 categories (0 = single type, 1 = uniform mix)"
+            )}
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <MetricTile
+                label="Alerts logged"
+                value={fmtInt(haz.notification_count)}
+                band={haz.notification_count >= 20 ? "high" : haz.notification_count >= 5 ? "med" : "low"}
+                verdict={
+                  haz.notification_count >= 20
+                    ? "Many alerts on record — sustained attention from RASFF."
+                    : haz.notification_count >= 5
+                      ? "A meaningful cluster of alerts to consider."
+                      : haz.notification_count > 0
+                        ? "A small number of alerts on record."
+                        : "No alerts on record in window."
+                }
               />
-              <MetricCard
-                label="Alert count"
-                value={haz.notification_count}
-                subtext="Distinct RASFF notifications on this corridor"
-              />
-              <MetricCard
-                label="Cumulative alert weight"
+              <MetricTile
+                label="Cumulative seriousness"
                 value={fmt(haz.severity_total, 2)}
-                subtext="W_class x W_risk summed across every alert"
+                band={haz.severity_total >= 10 ? "high" : haz.severity_total >= 3 ? "med" : "low"}
+                verdict="Sum of severity weights (classification × risk decision) across every alert."
+              />
+              <MetricTile
+                label="Hazard intensity"
+                abbr="HIS"
+                value={fmt(haz.his)}
+                band={interpretHis(haz.his).band}
+                bar={Math.min(haz.his / 1.5, 1)}
+                verdict={interpretHis(haz.his).verdict}
+              />
+              <MetricTile
+                label="Hazard diversity"
+                abbr="HDI"
+                value={fmt(haz.hdi)}
+                band={interpretHdi(haz.hdi).band}
+                bar={haz.hdi}
+                verdict={interpretHdi(haz.hdi).verdict}
               />
             </div>
             {haz.hazard_breakdown && (
@@ -308,63 +499,186 @@ export default function CorridorDeepDive() {
             )}
           </>
         ) : (
-          <p className="text-sm text-gray-400 italic">No hazard data available.</p>
+          <p className="text-sm italic text-slate-400">No hazard data available.</p>
         )}
-      </div>
+      </section>
 
-      <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-1 text-sm font-semibold text-gray-900 flex items-center gap-2">
-          <TrendingUp size={15} className="text-amber-500" aria-hidden />
-          Trade anomalies
-        </h2>
-        <p className="mb-4 text-xs text-slate-600">
-          Price and volume patterns compared with usual trade. Use to spot lanes worth a targeted
-          check; anomalies are not proof of fraud.
-        </p>
+      {/* Step 2 — Supply picture (Dependency) */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <StepHeader
+          step={2}
+          title="The supply picture"
+          description="How much of the destination's supply rides on this origin, and how replaceable that supply is."
+          icon={Boxes}
+          iconColor="text-blue-500"
+        />
+
+        {dep && !("error" in dep) ? (
+          <>
+            {supplyVerdict && (
+              <VerdictBanner
+                title={supplyVerdict.title}
+                body={supplyVerdict.body}
+                band={supplyVerdict.band}
+                icon={Boxes}
+                chip={{
+                  label:
+                    dep.provenance === "faostat"
+                      ? "FAOSTAT balance sheet"
+                      : "Trade-only estimate",
+                  tone: dep.provenance === "faostat" ? "low" : "med",
+                }}
+              />
+            )}
+            {dep.idr_gt_1 && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                <span className="font-semibold">Imports exceed supply.</span> Either{" "}
+                {profile.destination_country} re-exports this commodity (trade hub) or its
+                production data is not yet ingested. Treat self-sufficiency below with care.
+              </div>
+            )}
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <MetricTile
+                label="Import reliance"
+                abbr="IDR"
+                value={fmt(dep.idr)}
+                band={interpretIdr(dep.idr).band}
+                bar={Math.min((dep.idr ?? 0) / 1.5, 1)}
+                verdict={interpretIdr(dep.idr).verdict}
+                caption="Share of apparent supply that comes from imports."
+              />
+              <MetricTile
+                label="Share from this origin"
+                abbr="OCS"
+                value={fmtPct(dep.ocs ?? 0)}
+                band={interpretOcs(dep.ocs).band}
+                bar={dep.ocs ?? 0}
+                verdict={interpretOcs(dep.ocs).verdict}
+                caption="Slice of total imports that come from this single origin."
+              />
+              <MetricTile
+                label="Supplier concentration"
+                abbr="HHI"
+                value={fmt(dep.hhi)}
+                band={interpretHhi(dep.hhi).band}
+                bar={dep.hhi ?? 0}
+                verdict={interpretHhi(dep.hhi).verdict}
+                caption="0 = many balanced suppliers, 1 = single supplier. ≥0.25 is concentrated."
+              />
+              <MetricTile
+                label="Self-sufficiency"
+                abbr="SSR"
+                value={fmt(dep.ssr)}
+                band={interpretSsr(dep.ssr).band}
+                bar={Math.min(dep.ssr ?? 0, 1)}
+                verdict={interpretSsr(dep.ssr).verdict}
+                caption={
+                  dep.production_kg != null && dep.production_kg > 0
+                    ? `Domestic production ≈ ${tonnes(dep.production_kg)}.`
+                    : "Domestic production data not available."
+                }
+                badge={
+                  dep.provenance === "faostat"
+                    ? undefined
+                    : { label: "trade-only", tone: "warn" }
+                }
+              />
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <MetricTile
+                label="Bilateral dependency"
+                abbr="BDI"
+                value={fmt(dep.bdi)}
+                band={(dep.bdi ?? 0) >= 0.5 ? "high" : (dep.bdi ?? 0) >= 0.25 ? "med" : "low"}
+                verdict="How much of the destination's domestic supply comes specifically from this origin."
+                caption="Equals Import reliance × Origin share."
+              />
+              <MetricTile
+                label="Supply criticality"
+                abbr="SCI"
+                value={fmt(dep.sci)}
+                band={interpretSci(dep.sci).band}
+                bar={Math.min((dep.sci ?? 0) / 2, 1)}
+                verdict={interpretSci(dep.sci).verdict}
+                caption="The headline lane exposure number, 0–2."
+              />
+              <MetricTile
+                label="Apparent domestic supply"
+                abbr="DS′"
+                value={tonnes(dep.production_kg && dep.total_imports_kg
+                  ? (dep.production_kg + dep.total_imports_kg)
+                  : null)}
+                verdict="Production + imports − exports for the period."
+                caption="Denominator of import reliance."
+              />
+            </div>
+          </>
+        ) : (
+          <p className="text-sm italic text-slate-400">
+            Dependency metrics need bilateral import statistics and production context for this
+            corridor. They will appear here once that data is loaded in the API.
+          </p>
+        )}
+      </section>
+
+      {/* Step 3 — Trade pattern check */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <StepHeader
+          step={3}
+          title="Trade-pattern check"
+          description="Price and volume patterns compared with usual trade. Anomalies are leads, not proof."
+          icon={TrendingUp}
+          iconColor="text-amber-500"
+        />
+
         {tradeFlow && !("error" in tradeFlow) ? (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <MetricCard
-                label="Unit value"
-                value={isNaN(tradeFlow.unit_value ?? NaN) ? "N/A" : `$${fmt(tradeFlow.unit_value!, 2)}/kg`}
-                subtext="Approximate price per kg from declared value over quantity"
-              />
-              <MetricCard
-                label="Price vs peers (z-score)"
-                value={isNaN(tradeFlow.z_uv ?? NaN) ? "N/A" : fmt(tradeFlow.z_uv!)}
-                subtext={
-                  (tradeFlow.z_uv ?? 0) < -2
-                    ? "Far below typical prices: check quality and documentation"
-                    : (tradeFlow.z_uv ?? 0) > 2
-                    ? "Far above typical prices: check misclassification or premium claims"
-                    : "Near typical range for partner peers"
+          <>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <MetricTile
+                label="Unit price"
+                value={
+                  tradeFlow.unit_value != null && !Number.isNaN(tradeFlow.unit_value)
+                    ? `$${fmt(tradeFlow.unit_value, 2)}`
+                    : "—"
                 }
-                icon={AlertTriangle}
-                color={
-                  Math.abs(tradeFlow.z_uv ?? 0) > 2 ? "bg-red-500" : "bg-gray-400"
-                }
+                unit="/kg"
+                verdict="Approximate price per kilogram from declared value over quantity."
               />
-              <MetricCard
-                label="Mirror trade gap (MTD)"
-                value={isNaN(tradeFlow.mtd ?? NaN) ? "N/A" : fmtPct(tradeFlow.mtd!)}
-                subtext={
-                  (tradeFlow.mtd ?? 0) > 0.3
-                    ? "Partner reported volumes differ strongly: verify reporting"
-                    : "Reporter and partner figures broadly align"
+              <MetricTile
+                label="Price vs peers"
+                abbr="z-score"
+                value={
+                  tradeFlow.z_uv != null && !Number.isNaN(tradeFlow.z_uv)
+                    ? fmt(tradeFlow.z_uv)
+                    : "—"
                 }
+                band={interpretZuv(tradeFlow.z_uv).band}
+                verdict={interpretZuv(tradeFlow.z_uv).verdict}
               />
-              <MetricCard
-                label="Concentration change (delta HHI)"
-                value={tradeFlow.delta_hhi != null ? fmt(tradeFlow.delta_hhi) : "N/A"}
-                subtext="How much supplier concentration moved in the window"
+              <MetricTile
+                label="Mirror trade gap"
+                abbr="MTD"
+                value={
+                  tradeFlow.mtd != null && !Number.isNaN(tradeFlow.mtd)
+                    ? fmtPct(tradeFlow.mtd)
+                    : "—"
+                }
+                band={interpretMtd(tradeFlow.mtd).band}
+                verdict={interpretMtd(tradeFlow.mtd).verdict}
+              />
+              <MetricTile
+                label="Concentration change"
+                abbr="ΔHHI"
+                value={tradeFlow.delta_hhi != null ? fmt(tradeFlow.delta_hhi) : "—"}
+                band={interpretDeltaHhi(tradeFlow.delta_hhi).band}
+                verdict={interpretDeltaHhi(tradeFlow.delta_hhi).verdict}
               />
             </div>
 
-            {/* Peer UV bar chart */}
             {peerUVs.length > 0 && (
-              <div>
-                <p className="mb-2 text-xs text-gray-500">
-                  Unit prices by origin (this corridor highlighted)
+              <div className="mt-4">
+                <p className="mb-2 text-xs font-medium text-slate-600">
+                  Unit prices by origin — this corridor highlighted in blue
                 </p>
                 <ResponsiveContainer width="100%" height={180}>
                   <BarChart data={peerUVs}>
@@ -374,87 +688,102 @@ export default function CorridorDeepDive() {
                     <Tooltip formatter={(v) => `$${Number(v).toFixed(2)}/kg`} />
                     <Bar dataKey="uv">
                       {peerUVs.map((entry, i) => (
-                        <Cell
-                          key={i}
-                          fill={entry.isThis ? "#3b82f6" : "#cbd5e1"}
-                        />
+                        <Cell key={i} fill={entry.isThis ? "#3b82f6" : "#cbd5e1"} />
                       ))}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             )}
-          </div>
+          </>
         ) : (
-          <p className="text-sm italic text-gray-400">
-            Trade anomaly metrics need bilateral import records for this corridor in the API.
+          <p className="text-sm italic text-slate-400">
+            Trade-pattern metrics need bilateral import records for this corridor in the API.
           </p>
         )}
-      </div>
+      </section>
 
-      <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-1 text-sm font-semibold text-gray-900 flex items-center gap-2">
-          <Shield size={15} className="text-purple-500" aria-hidden />
-          Combined priority score
-        </h2>
-        <p className="mb-4 text-xs text-slate-600">
-          CVS (0 to 1) merges structural reliance (SCI), hazard heat (HIS), and demand pressure
-          (CRS) after normalisation. Treat it as a ranking aid; confirm with controls on the
-          ground.
-        </p>
+      {/* Step 4 — Score transparency */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <StepHeader
+          step={4}
+          title="How we got this score"
+          description="Transparency for the priority score above. Each component is the lane's percentile rank on that factor."
+          icon={Scale}
+          iconColor="text-purple-500"
+        />
 
-        {profile.cvs == null && (
-          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-            <span className="font-semibold">CVS unavailable for this corridor.</span>{" "}
-            Missing:{" "}
-            <span className="font-mono">
-              {(profile.cvs_missing_inputs ?? ["sci_norm", "crs_norm"]).join(", ")}
-            </span>
-            . Structural inputs (bilateral imports, domestic production, consumption ranking) are
-            not yet connected. The hazard-only view below reflects what we can see from RASFF
-            alone.
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          <div>
-            <p className="mb-2 text-xs text-gray-500">Shape of the score (each spoke 0 to 1)</p>
-            <RadarChart data={radarData} />
-            <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
-              SCI: structural reliance. HIS: hazard signal. CRS: consumption-related demand
-              pressure. PAS and SCCS are placeholders until those inputs are wired.
-            </p>
-          </div>
-          <div>
-            <p className="mb-2 text-xs text-gray-500">
-              {profile.cvs != null
-                ? "How much each factor contributes"
-                : "Hazard-only signal (structural factors missing)"}
-            </p>
-            <div className="mb-4">
-              <span className="font-mono text-3xl font-bold text-gray-900">
+        {breakdown.length === 0 ? (
+          <p className="text-sm italic text-slate-400">
+            No normalised components available yet.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-[1fr_1fr]">
+            <div>
+              <p className="mb-2 text-[11px] font-medium text-slate-600">
+                Contribution by factor
+              </p>
+              <ul className="space-y-3">
+                {breakdown.map((b) => {
+                  const pct = (b.value / breakdownTotal) * 100;
+                  return (
+                    <li key={b.key}>
+                      <div className="mb-1 flex items-center justify-between text-xs">
+                        <span className="flex items-center gap-2 text-slate-700">
+                          <span
+                            className="inline-block h-2 w-2 rounded-sm"
+                            style={{ backgroundColor: b.color }}
+                            aria-hidden
+                          />
+                          {b.label}
+                        </span>
+                        <span className="font-mono text-[11px] text-slate-500">
+                          {fmt(b.value)} ({pct.toFixed(0)}%)
+                        </span>
+                      </div>
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full"
+                          style={{
+                            width: `${b.value * 100}%`,
+                            backgroundColor: b.color,
+                          }}
+                        />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            <div>
+              <p className="mb-2 text-[11px] font-medium text-slate-600">Final priority score</p>
+              <p className={`font-mono text-3xl font-semibold ${cvsBandClasses.text}`}>
                 {profile.cvs != null
                   ? fmt(profile.cvs)
                   : profile.cvs_hazard_only != null
                     ? fmt(profile.cvs_hazard_only)
-                    : "N/A"}
-              </span>
-              <span className="ml-2 text-sm text-gray-400">
-                {profile.cvs != null ? "out of 1.000 (CVS)" : "out of 1.000 (HIS percentile)"}
-              </span>
-            </div>
-            {profile.cvs != null && (
-              <p className="mb-3 text-[11px] text-slate-500">
+                    : "—"}
+                <span className="ml-1 text-xs font-normal text-slate-400">
+                  / 1.000
+                </span>
+              </p>
+              <p className="mt-2 text-[11px] text-slate-500">
                 Basis:{" "}
                 {profile.cvs_mode === "sci_crs_his"
-                  ? "structural reliance × consumption demand × hazard"
-                  : "structural reliance × hazard (consumption demand pending FAOSTAT)"}
+                  ? "supply criticality × hazard intensity × consumption rank."
+                  : profile.cvs_mode === "sci_his"
+                    ? "supply criticality × hazard intensity (consumption rank pending FAOSTAT food balance sheets)."
+                    : "hazard-only fallback (structural inputs missing)."}
               </p>
-            )}
-            <ScoreBar segments={scoreSegments} total={1} />
+              <p className="mt-2 text-[10px] text-slate-400">
+                Producer-attribution (PAS) and supply-chain-complexity (SCCS) factors from
+                blueprint sections 4.4/4.5 are not yet wired and have been omitted from this
+                breakdown.
+              </p>
+            </div>
           </div>
-        </div>
-      </div>
+        )}
+      </section>
     </div>
   );
 }
