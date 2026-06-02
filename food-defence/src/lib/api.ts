@@ -56,8 +56,10 @@ export const api = {
       ),
     get: (hs: string, dest: number, origin: number) =>
       fetchApi<CorridorMetric>(`/corridors/${hs}/${dest}/${origin}`),
-    full: (hs: string, dest: number, origin: number) =>
-      fetchApi<CorridorProfile>(`/corridors/${hs}/${dest}/${origin}/full`),
+    full: (hs: string, dest: number, origin: number, opts?: { interpret?: boolean }) =>
+      fetchApi<CorridorProfile>(
+        `/corridors/${hs}/${dest}/${origin}/full${opts?.interpret ? "?interpret=true" : ""}`
+      ),
     hazard: (hs: string, dest: number, origin: number) =>
       fetchApi<CorridorMetric>(`/corridors/${hs}/${dest}/${origin}/hazard`),
     tradeAnomalies: (hs: string, dest: number, origin: number) =>

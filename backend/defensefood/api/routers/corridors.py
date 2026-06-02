@@ -192,6 +192,14 @@ def get_corridor_full_profile(
     commodity_hs: str,
     dest_m49: int,
     origin_m49: int,
+    interpret: bool = Query(
+        False,
+        description=(
+            "When true, include an ``interpretations`` map with per-metric "
+            "plain-language verdict + band derived from the methodology scale "
+            "tables. Default false to keep payload small for existing consumers."
+        ),
+    ),
     state: AppState = Depends(get_state),
 ):
     """Full forensic profile: Section 2 + 4 + 5 + 7 metrics combined."""
@@ -273,7 +281,7 @@ def get_corridor_full_profile(
                 "peer_unit_values": peers,
             }
 
-    return {
+    response = {
         "commodity_hs": commodity_hs,
         "commodity_name": base.get("commodity_name", ""),
         "destination_m49": dest_m49,
@@ -294,6 +302,33 @@ def get_corridor_full_profile(
         "his_norm": base.get("his_norm"),
         "crs_norm": base.get("crs_norm"),
     }
+
+    if interpret:
+        # Build a flat-value view per metric for the interpretation helper,
+        # then attach the verdicts as a sibling map. Keeps the rest of the
+        # response identical when the flag is off.
+        from defensefood.pipeline.interpretation import interpret_corridor
+        flat: dict[str, object] = {}
+        if dependency and "error" not in dependency:
+            for k in ("ds_prime", "idr", "ocs", "bdi", "hhi", "ssr", "sci"):
+                if k in dependency:
+                    flat[k] = dependency[k]
+        if hazard:
+            for k in ("his", "hdi"):
+                if k in hazard:
+                    flat[k] = hazard[k]
+        if trade_flow and "error" not in trade_flow:
+            tf_map = {"z_uv": "z_uv", "mtd": "mtd", "delta_hhi": "delta_hhi"}
+            for k_src, k_dst in tf_map.items():
+                if k_src in trade_flow:
+                    flat[k_dst] = trade_flow[k_src]
+        if response.get("cvs") is not None:
+            flat["cvs"] = response["cvs"]
+        if base.get("crs") is not None:
+            flat["crs"] = base["crs"]
+        response["interpretations"] = interpret_corridor(flat)
+
+    return response
 
 
 @router.get("/{commodity_hs}/{dest_m49}/{origin_m49}/trade-anomalies")

@@ -134,6 +134,8 @@ export interface CorridorProfile {
   sci_norm?: number | null;
   his_norm?: number | null;
   crs_norm?: number | null;
+  /** Server-side verdicts when /full was requested with ?interpret=true. */
+  interpretations?: Record<string, MetricInterpretation>;
 }
 
 // ── Network Graph ──
@@ -271,6 +273,14 @@ export interface CoverageReport {
   faostat_available: boolean;
 }
 
+export interface MethodologyScaleBand {
+  min: number;
+  max: number;
+  label: string;
+  band: "low" | "med" | "high" | "flag";
+  advice: string;
+}
+
 export interface MethodologyEntry {
   key: string;
   name: string;
@@ -278,9 +288,26 @@ export interface MethodologyEntry {
   section: string;
   blueprint_eq: string;
   formula_latex: string;
+  /** Plain-English rewrite of the formula. */
+  formula_plain?: string;
   inputs: string[];
   definition: string;
+  /** Ordered list of value bands with verdict + advice (single source of truth for interpretation). */
+  scale?: MethodologyScaleBand[];
+  /** One-sentence note on when this metric drives a decision. */
+  when_matters?: string;
+  /** Metric keys this one combines with or cross-references. */
+  related?: string[];
   source: string;
+}
+
+/** Verdict returned by backend's interpret_corridor (mirrors interpret.ts). */
+export interface MetricInterpretation {
+  verdict: string;
+  band: "low" | "med" | "high" | "flag";
+  advice: string | null;
+  label: string | null;
+  ok: boolean;
 }
 
 export interface DistributionStats {

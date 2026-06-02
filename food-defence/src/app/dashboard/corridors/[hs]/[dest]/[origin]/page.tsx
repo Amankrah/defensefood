@@ -48,6 +48,7 @@ import { actionFor } from "@/lib/actionHint";
 import MetricTile from "@/components/shared/MetricTile";
 import VerdictBanner from "@/components/shared/VerdictBanner";
 import { RolePills } from "@/components/shared/RolePill";
+import LaneWalkthrough from "@/components/shared/LaneWalkthrough";
 
 const HAZARD_CATS: {
   key: HazardBucket;
@@ -480,6 +481,7 @@ export default function LaneReport() {
               <MetricTile
                 label="Hazard intensity"
                 abbr="HIS"
+                metricKey="his"
                 value={fmt(haz.his)}
                 band={interpretHis(haz.his).band}
                 bar={Math.min(haz.his / 1.5, 1)}
@@ -488,6 +490,7 @@ export default function LaneReport() {
               <MetricTile
                 label="Hazard diversity"
                 abbr="HDI"
+                metricKey="hdi"
                 value={fmt(haz.hdi)}
                 band={interpretHdi(haz.hdi).band}
                 bar={haz.hdi}
@@ -541,6 +544,7 @@ export default function LaneReport() {
               <MetricTile
                 label="Import reliance"
                 abbr="IDR"
+                metricKey="idr"
                 value={fmt(dep.idr)}
                 band={interpretIdr(dep.idr).band}
                 bar={Math.min((dep.idr ?? 0) / 1.5, 1)}
@@ -550,6 +554,7 @@ export default function LaneReport() {
               <MetricTile
                 label="Share from this origin"
                 abbr="OCS"
+                metricKey="ocs"
                 value={fmtPct(dep.ocs ?? 0)}
                 band={interpretOcs(dep.ocs).band}
                 bar={dep.ocs ?? 0}
@@ -559,6 +564,7 @@ export default function LaneReport() {
               <MetricTile
                 label="Supplier concentration"
                 abbr="HHI"
+                metricKey="hhi"
                 value={fmt(dep.hhi)}
                 band={interpretHhi(dep.hhi).band}
                 bar={dep.hhi ?? 0}
@@ -568,6 +574,7 @@ export default function LaneReport() {
               <MetricTile
                 label="Self-sufficiency"
                 abbr="SSR"
+                metricKey="ssr"
                 value={fmt(dep.ssr)}
                 band={interpretSsr(dep.ssr).band}
                 bar={Math.min(dep.ssr ?? 0, 1)}
@@ -588,6 +595,7 @@ export default function LaneReport() {
               <MetricTile
                 label="Bilateral dependency"
                 abbr="BDI"
+                metricKey="bdi"
                 value={fmt(dep.bdi)}
                 band={(dep.bdi ?? 0) >= 0.5 ? "high" : (dep.bdi ?? 0) >= 0.25 ? "med" : "low"}
                 verdict="How much of the destination's domestic supply comes specifically from this origin."
@@ -596,6 +604,7 @@ export default function LaneReport() {
               <MetricTile
                 label="Supply criticality"
                 abbr="SCI"
+                metricKey="sci"
                 value={fmt(dep.sci)}
                 band={interpretSci(dep.sci).band}
                 bar={Math.min((dep.sci ?? 0) / 2, 1)}
@@ -604,6 +613,7 @@ export default function LaneReport() {
               />
               <MetricTile
                 label="Apparent domestic supply"
+                metricKey="ds_prime"
                 abbr="DS′"
                 value={tonnes(dep.production_kg && dep.total_imports_kg
                   ? (dep.production_kg + dep.total_imports_kg)
@@ -702,6 +712,12 @@ export default function LaneReport() {
           </p>
         )}
       </section>
+
+      {/* Lane-specific walkthrough — formula chain with this lane's actual numbers */}
+      <LaneWalkthrough
+        dependency={dep && !("error" in dep) ? dep : null}
+        cvs={profile.cvs}
+      />
 
       {/* Step 4 — Score transparency */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

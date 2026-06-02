@@ -2,6 +2,7 @@
 
 import type { LucideIcon } from "lucide-react";
 import { bandClasses, type Band } from "@/lib/interpret";
+import MetricHelp from "@/components/shared/MetricHelp";
 
 interface MetricTileProps {
   /** Plain-language primary label, e.g. "Import reliance". */
@@ -24,6 +25,8 @@ interface MetricTileProps {
   badge?: { label: string; tone: "ok" | "warn" };
   /** Optional caption below verdict (raw formula / context). */
   caption?: string;
+  /** Metric key (e.g. "idr") — when set, a "?" help icon opens the Glossary entry. */
+  metricKey?: string;
 }
 
 const VALUE_TONE: Record<Band, string> = {
@@ -49,6 +52,7 @@ export default function MetricTile({
   icon: Icon,
   badge,
   caption,
+  metricKey,
 }: MetricTileProps) {
   const c = bandClasses(band);
   const valueColor = VALUE_TONE[band];
@@ -57,7 +61,7 @@ export default function MetricTile({
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow-md">
       <div className="mb-1 flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {Icon && <Icon size={14} className="text-slate-400" aria-hidden />}
           <p className="text-xs font-semibold text-slate-700">
             {label}
@@ -67,6 +71,7 @@ export default function MetricTile({
               </span>
             )}
           </p>
+          {metricKey && <MetricHelp metricKey={metricKey} label={label} />}
         </div>
         {badge && (
           <span
