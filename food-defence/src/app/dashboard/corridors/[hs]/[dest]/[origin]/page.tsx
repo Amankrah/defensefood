@@ -39,8 +39,14 @@ import {
   interpretSci,
   interpretSsr,
   interpretZuv,
+  interpretVolume,
   interpretMtd,
   interpretDeltaHhi,
+  interpretDeltaOcs,
+  interpretDgi,
+  interpretPcc,
+  interpretCrs,
+  interpretDis,
   bandClasses,
   type Band,
 } from "@/lib/interpret";
@@ -48,6 +54,7 @@ import { actionFor } from "@/lib/actionHint";
 import MetricTile from "@/components/shared/MetricTile";
 import VerdictBanner from "@/components/shared/VerdictBanner";
 import { RolePills } from "@/components/shared/RolePill";
+import { MarketPresenceBadge } from "@/components/shared/MarketPresenceBadge";
 import LaneWalkthrough from "@/components/shared/LaneWalkthrough";
 
 const HAZARD_CATS: {
@@ -361,12 +368,16 @@ export default function LaneReport() {
                 Destination role
               </span>
               <RolePills roles={profile.destination_roles} />
-              {profile.is_active_destination === false && (
-                <span className="text-[10px] italic text-slate-400">
-                  (passive mention — no active response required)
-                </span>
-              )}
+              <MarketPresenceBadge presence={profile.market_presence} />
             </div>
+          )}
+          {profile.market_presence === "informational" && (
+            <p className="mt-2 max-w-2xl rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] leading-snug text-slate-600">
+              <strong className="text-slate-700">Informational lane.</strong> Per EU RASFF SOPs,
+              the product is not on this country&apos;s market. Structural metrics (SCI, BDI,
+              CVS) are shown below for transparency but should not drive inspection priority
+              for this lane.
+            </p>
           )}
         </div>
       </header>
@@ -428,12 +439,27 @@ export default function LaneReport() {
 
       {profile.cvs == null && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-          <span className="font-semibold">CVS unavailable.</span> Missing inputs:{" "}
-          <span className="font-mono">
-            {(profile.cvs_missing_inputs ?? ["sci_norm", "crs_norm"]).join(", ")}
-          </span>
-          . The hazard-only fallback gives you a ranking; the structural picture below is still
-          worth reading.
+          <span className="font-semibold">CVS unavailable.</span>{" "}
+          {profile.sci_unavailable_label ? (
+            <span>{profile.sci_unavailable_label}</span>
+          ) : (
+            <>
+              Missing inputs:{" "}
+              <span className="font-mono">
+                {(profile.cvs_missing_inputs ?? ["sci_norm"]).join(", ")}
+              </span>
+            </>
+          )}
+          {profile.cvs_hazard_only != null ? (
+            <>
+              {" "}
+              Hazard-only fallback score:{" "}
+              <span className="font-mono font-semibold">
+                {profile.cvs_hazard_only.toFixed(3)}
+              </span>
+            </>
+          ) : null}
+          . The structural picture below is still worth reading when trade data exists.
         </div>
       )}
 
@@ -497,6 +523,20 @@ export default function LaneReport() {
                 verdict={interpretHdi(haz.hdi).verdict}
               />
             </div>
+            {haz.dgi != null && (
+              <div className="mt-3">
+                <MetricTile
+                  label="Detection gap"
+                  abbr="DGI"
+                  metricKey="dgi"
+                  value={fmt(haz.dgi)}
+                  band={interpretDgi(haz.dgi).band}
+                  bar={Math.min(Math.max((haz.dgi + 1) / 2, 0), 1)}
+                  verdict={interpretDgi(haz.dgi).verdict}
+                  caption="Lane's share of trade minus its share of notifications (≈ [−1, +1])."
+                />
+              </div>
+            )}
             {haz.hazard_breakdown && (
               <HazardBreakdownBar breakdown={haz.hazard_breakdown} />
             )}
@@ -631,6 +671,60 @@ export default function LaneReport() {
         )}
       </section>
 
+      {/* Step 2.5 — Demand picture (consumption) */}
+      {profile.consumption &&
+        (profile.consumption.pcc != null ||
+          profile.consumption.crs != null ||
+          profile.consumption.dis != null) && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <StepHeader
+              step={3}
+              title="The demand picture"
+              description="How important this commodity is to the destination's food system — drives the fraud-exploitability ceiling."
+              icon={Boxes}
+              iconColor="text-purple-500"
+            />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {profile.consumption.pcc != null && (
+                <MetricTile
+                  label="Per-capita consumption"
+                  abbr="PCC"
+                  metricKey="pcc"
+                  value={`${fmt(profile.consumption.pcc, 1)}`}
+                  unit="kg/yr"
+                  band={interpretPcc(profile.consumption.pcc).band}
+                  verdict={interpretPcc(profile.consumption.pcc).verdict}
+                  caption="FAOSTAT Food Balance Sheet supply ÷ population."
+                />
+              )}
+              {profile.consumption.crs != null && (
+                <MetricTile
+                  label="Consumption rank"
+                  abbr="CRS"
+                  metricKey="crs"
+                  value={fmt(profile.consumption.crs)}
+                  band={interpretCrs(profile.consumption.crs).band}
+                  bar={profile.consumption.crs}
+                  verdict={interpretCrs(profile.consumption.crs).verdict}
+                  caption="Where this commodity sits in the destination's dietary basket (0 = lowest, 1 = top)."
+                />
+              )}
+              {profile.consumption.dis != null && (
+                <MetricTile
+                  label="Demand inelasticity"
+                  abbr="DIS"
+                  metricKey="dis"
+                  value={fmt(profile.consumption.dis)}
+                  band={interpretDis(profile.consumption.dis).band}
+                  bar={profile.consumption.dis}
+                  verdict={interpretDis(profile.consumption.dis).verdict}
+                  caption="1 − coefficient of variation of PCC over a 5-year window."
+                />
+              )}
+            </div>
+          </section>
+        )}
+
       {/* Step 3 — Trade pattern check */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <StepHeader
@@ -656,7 +750,8 @@ export default function LaneReport() {
               />
               <MetricTile
                 label="Price vs peers"
-                abbr="z-score"
+                abbr="z(UV)"
+                metricKey="z_uv"
                 value={
                   tradeFlow.z_uv != null && !Number.isNaN(tradeFlow.z_uv)
                     ? fmt(tradeFlow.z_uv)
@@ -668,6 +763,7 @@ export default function LaneReport() {
               <MetricTile
                 label="Mirror trade gap"
                 abbr="MTD"
+                metricKey="mtd"
                 value={
                   tradeFlow.mtd != null && !Number.isNaN(tradeFlow.mtd)
                     ? fmtPct(tradeFlow.mtd)
@@ -679,9 +775,49 @@ export default function LaneReport() {
               <MetricTile
                 label="Concentration change"
                 abbr="ΔHHI"
+                metricKey="delta_hhi"
                 value={tradeFlow.delta_hhi != null ? fmt(tradeFlow.delta_hhi) : "—"}
                 band={interpretDeltaHhi(tradeFlow.delta_hhi).band}
                 verdict={interpretDeltaHhi(tradeFlow.delta_hhi).verdict}
+              />
+            </div>
+
+            {/* Section 5.2 + 5.4b — additional trade-flow tiles */}
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {(() => {
+                const hasVol =
+                  tradeFlow.z_volume != null && !Number.isNaN(tradeFlow.z_volume);
+                const need = (tradeFlow.z_volume_window_k ?? 5) + 1;
+                const have = tradeFlow.z_volume_periods_available ?? 0;
+                return (
+                  <MetricTile
+                    label="Volume anomaly"
+                    abbr="z(M)"
+                    metricKey="z_volume"
+                    value={hasVol ? fmt(tradeFlow.z_volume as number) : "—"}
+                    band={hasVol ? interpretVolume(tradeFlow.z_volume).band : "low"}
+                    verdict={
+                      hasVol
+                        ? interpretVolume(tradeFlow.z_volume).verdict
+                        : `Needs longer trade history (≥${need} periods; have ${have}).`
+                    }
+                    caption="Rolling-window z-score on the corridor's own import volume."
+                    badge={hasVol ? undefined : { label: "history pending", tone: "warn" }}
+                  />
+                );
+              })()}
+              <MetricTile
+                label="Origin share change"
+                abbr="ΔOCS"
+                metricKey="delta_ocs"
+                value={
+                  tradeFlow.delta_ocs != null && !Number.isNaN(tradeFlow.delta_ocs)
+                    ? fmt(tradeFlow.delta_ocs)
+                    : "—"
+                }
+                band={interpretDeltaOcs(tradeFlow.delta_ocs).band}
+                verdict={interpretDeltaOcs(tradeFlow.delta_ocs).verdict}
+                caption="This origin's share of imports vs prior period."
               />
             </div>
 

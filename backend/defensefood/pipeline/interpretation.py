@@ -98,8 +98,8 @@ def interpret_metric(
 # Section 2 keys interpret_corridor will scan by default.
 _SECTION_2_KEYS = ("ds_prime", "idr", "ocs", "bdi", "hhi", "ssr", "sci")
 _HAZARD_KEYS = ("his", "hdi")
-_TRADE_KEYS = ("z_uv", "mtd", "delta_hhi")
-_CONSUMPTION_KEYS = ("crs",)
+_TRADE_KEYS = ("z_uv", "z_volume", "mtd", "delta_hhi", "delta_ocs")
+_CONSUMPTION_KEYS = ("pcc", "crs", "dis")
 _COMPOSITE_KEYS = ("cvs",)
 
 _DEFAULT_KEYS = _SECTION_2_KEYS + _HAZARD_KEYS + _TRADE_KEYS + _CONSUMPTION_KEYS + _COMPOSITE_KEYS

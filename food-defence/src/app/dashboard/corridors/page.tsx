@@ -7,8 +7,10 @@ import type { CorridorMetric, Country } from "@/lib/types";
 import { riskColor, fmt, truncate } from "@/lib/utils";
 import DataTable, { type Column } from "@/components/shared/DataTable";
 import { RolePills } from "@/components/shared/RolePill";
+import { MarketPresenceBadge } from "@/components/shared/MarketPresenceBadge";
 import CollapsibleSection from "@/components/shared/CollapsibleSection";
 import { whyLine } from "@/lib/whyLine";
+import { sciReasonShort, structuralGapTitle } from "@/lib/dataQuality";
 
 const COLUMNS: Column<CorridorMetric>[] = [
   {
@@ -89,45 +91,97 @@ const COLUMNS: Column<CorridorMetric>[] = [
       "RASFF roles that flagged the destination: notifier (detected), distribution (shipped), follow-up (must investigate), attention (passive).",
     type: "string",
     sortable: false,
-    render: (r) => <RolePills roles={r.destination_roles} />,
+    render: (r) => (
+      <div className="flex flex-col gap-1">
+        <RolePills roles={r.destination_roles} />
+        {r.market_presence && r.market_presence !== "unknown" && (
+          <MarketPresenceBadge presence={r.market_presence} />
+        )}
+      </div>
+    ),
   },
   {
     key: "sci",
     label: "Supply criticality (SCI)",
     headerDescription:
-      "Structural reliance on this origin amplified by supplier concentration (0–2). '—' when bilateral trade data is missing for the lane.",
+      "Structural reliance on this origin amplified by supplier concentration (0–2). A short note appears when Comtrade/FAOSTAT cannot support SCI.",
     type: "number",
-    render: (r) => (
-      <span
-        className={`font-mono ${r.sci != null ? riskColor(r.sci, 1.0) : "text-slate-300"}`}
-        title={
-          r.sci != null
-            ? `${
-                r.provenance === "faostat"
-                  ? "FAOSTAT balance sheet"
-                  : "Trade-only estimate (DS' = M − X)"
-              }${r.idr_gt_1 ? " · IDR>1: imports exceed apparent supply" : ""}`
-            : "No trade data for this corridor"
-        }
-      >
-        {r.sci != null ? fmt(r.sci) : "—"}
-        {r.sci != null && r.provenance !== "faostat" && (
-          <span className="ml-0.5 text-slate-400" aria-hidden>≈</span>
-        )}
-      </span>
-    ),
+    render: (r) => {
+      if (r.sci != null) {
+        return (
+          <span
+            className={`font-mono ${riskColor(r.sci, 1.0)}`}
+            title={
+              r.provenance === "faostat"
+                ? "FAOSTAT balance sheet"
+                : "Trade-only estimate (DS' = M − X)"
+            }
+          >
+            {fmt(r.sci)}
+            {r.provenance !== "faostat" && (
+              <span className="ml-0.5 text-slate-400" aria-hidden>≈</span>
+            )}
+          </span>
+        );
+      }
+      const short = sciReasonShort(r.sci_unavailable_reason);
+      return (
+        <span
+          className="block max-w-[9rem]"
+          title={structuralGapTitle(
+            r.sci_unavailable_label,
+            r.sci_unavailable_reason,
+            r.cvs_hazard_only
+          )}
+        >
+          <span className="font-mono text-slate-300">—</span>
+          {short ? (
+            <span className="mt-0.5 block text-[10px] leading-tight text-slate-400">
+              {short}
+            </span>
+          ) : null}
+        </span>
+      );
+    },
   },
   {
     key: "cvs",
     label: "Priority (CVS)",
     headerDescription:
-      "Combined priority score, 0–1. Higher = review sooner.",
+      "Combined priority score, 0–1. When structural inputs are missing, hazard-only fallback may still appear on the lane report.",
     type: "number",
-    render: (r) => (
-      <span className={`font-mono font-semibold ${riskColor(r.cvs ?? 0, 0.5)}`}>
-        {r.cvs != null ? fmt(r.cvs) : "—"}
-      </span>
-    ),
+    render: (r) => {
+      if (r.cvs != null) {
+        return (
+          <span className={`font-mono font-semibold ${riskColor(r.cvs, 0.5)}`}>
+            {fmt(r.cvs)}
+          </span>
+        );
+      }
+      const hazardOnly =
+        r.cvs_hazard_only != null ? fmt(r.cvs_hazard_only) : null;
+      return (
+        <span
+          className="block max-w-[9rem]"
+          title={structuralGapTitle(
+            r.sci_unavailable_label,
+            r.sci_unavailable_reason,
+            r.cvs_hazard_only
+          )}
+        >
+          <span className="font-mono font-semibold text-slate-300">—</span>
+          {hazardOnly ? (
+            <span className="mt-0.5 block text-[10px] leading-tight text-amber-700">
+              Haz. {hazardOnly}
+            </span>
+          ) : (
+            <span className="mt-0.5 block text-[10px] leading-tight text-slate-400">
+              {sciReasonShort(r.sci_unavailable_reason) ?? "No structural score"}
+            </span>
+          )}
+        </span>
+      );
+    },
   },
 ];
 
@@ -136,6 +190,12 @@ type CorridorFilters = {
   origin: string;
   destination: string;
   role: string;
+  /**
+   * When true, exclude attention-only ("informational") corridors. Per EU RASFF
+   * SOPs, attention-only lanes are not actually on the destination market.
+   * Default on so the priority queue surfaces inspectable lanes; researchers
+   * can switch it off to see the full population.
+   */
   activeOnly: boolean;
   minHis: string;
   minNotifications: string;
@@ -153,7 +213,7 @@ const DEFAULT_FILTERS: CorridorFilters = {
   origin: "",
   destination: "",
   role: "",
-  activeOnly: false,
+  activeOnly: true,
   minHis: "",
   minNotifications: "",
   minHdi: "",
@@ -194,6 +254,9 @@ function buildListQuery(f: CorridorFilters): string {
   if (f.origin) p.set("origin", f.origin);
   if (f.destination) p.set("destination", f.destination);
   if (f.role) p.set("role", f.role);
+  // active_only excludes attention-only ("informational") corridors. RASFF
+  // says the product is not on this market, so structural metrics are not
+  // meaningful for ranking. Default-on for planners, toggle off for research.
   if (f.activeOnly) p.set("active_only", "true");
   const his = parseFloat(f.minHis);
   if (f.minHis.trim() !== "" && !Number.isNaN(his)) p.set("min_his", String(his));
@@ -222,7 +285,9 @@ function countActiveFilters(f: CorridorFilters): number {
   if (f.origin) n++;
   if (f.destination) n++;
   if (f.role) n++;
-  if (f.activeOnly) n++;
+  // activeOnly now defaults to true; only count it when the user has flipped
+  // it off (showing informational lanes) — that is the explicit deviation.
+  if (f.activeOnly !== DEFAULT_FILTERS.activeOnly) n++;
   if (f.minHis.trim()) n++;
   if (f.minNotifications.trim()) n++;
   if (f.minHdi.trim()) n++;
@@ -762,10 +827,12 @@ export default function CorridorExplorer() {
                 }
                 className="rounded border-gray-300"
               />
-              Active destination only
+              Hide informational lanes
             </label>
             <p className="text-[10px] text-slate-500">
-              Excludes lanes where the destination was only flagged “attention”.
+              Per EU RASFF SOPs, attention-only lanes are not on this market.
+              Default on for inspection planning; toggle off to research the
+              full notification population.
             </p>
           </div>
         </div>

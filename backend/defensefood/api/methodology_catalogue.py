@@ -254,35 +254,114 @@ METHODOLOGY: list[dict[str, Any]] = [
     },
     # ── Section 3: Consumption ──────────────────────────────────────────
     {
-        "key": "crs",
-        "name": "Consumption rank",
-        "abbr": "CRS",
-        "section": "3",
-        "blueprint_eq": "Sec. 3",
-        "formula_latex": r"CRS(c,i,t) = \mathrm{rank}_i\left(\mathrm{PCC}(c,i,t)\right)",
-        "formula_plain": "Percentile rank of per-capita consumption across destinations.",
-        "inputs": ["PCC (per-capita consumption)"],
+        "key": "pcc",
+        "name": "Per-capita apparent consumption",
+        "abbr": "PCC",
+        "section": "3.1",
+        "blueprint_eq": "Eq. (10)",
+        "formula_latex": r"PCC(c,i,t) = \frac{D(c,i,t)}{Pop(i,t)}",
+        "formula_plain": "Domestic food-use supply divided by population, in kg/capita/year.",
+        "inputs": ["D (food-use domestic supply)", "Pop (population)"],
         "definition": (
-            "Population-exposure ranking across destinations for the commodity. "
-            "Demand-side amplifier for the priority score: high CRS means many "
-            "people would be affected if a lane fails."
+            "Raw per-person consumption from FAOSTAT Food Balance Sheets — how "
+            "much of this commodity each resident consumes annually. The "
+            "absolute scale varies wildly across commodities (a few kg for "
+            "spices, hundreds of kg for cereals), so use CRS for cross-commodity "
+            "comparison."
         ),
         "scale": [
-            {"min": 0.00, "max": 0.25, "label": "Low consumption rank", "band": _LOW,
-             "advice": "This destination consumes relatively little of the commodity."},
-            {"min": 0.25, "max": 0.50, "label": "Below-median consumption", "band": _LOW,
-             "advice": "Moderate consumption — average demand pressure."},
-            {"min": 0.50, "max": 0.75, "label": "Above-median consumption", "band": _MED,
-             "advice": "Higher-than-average per-capita consumption."},
-            {"min": 0.75, "max": 1.01, "label": "Top-quartile consumption", "band": _HIGH,
-             "advice": "Among the heaviest consumers — disruption affects many people."},
+            {"min": 0.00, "max": 1.0, "label": "Minimal consumption", "band": _LOW,
+             "advice": "Less than 1 kg per person per year — niche commodity for this country."},
+            {"min": 1.0, "max": 10.0, "label": "Low consumption", "band": _LOW,
+             "advice": "Modest dietary role."},
+            {"min": 10.0, "max": 50.0, "label": "Moderate consumption", "band": _MED,
+             "advice": "Notable share of the average diet."},
+            {"min": 50.0, "max": 1e6, "label": "High consumption", "band": _HIGH,
+             "advice": "Staple-level role in the country's food system."},
         ],
         "when_matters": (
-            "When weighting demand-side exposure — lanes affecting more people "
-            "get higher priority."
+            "When weighting outbound risk propagation by demand intensity — "
+            "ORPS uses PCC directly so origins shipping to high-consumption "
+            "destinations get higher scores."
         ),
-        "related": ["cvs", "orps"],
+        "related": ["crs", "dis", "orps"],
+        "source": "defensefood_core::consumption::compute_pcc",
+    },
+    {
+        "key": "crs",
+        "name": "Commodity consumption rank",
+        "abbr": "CRS",
+        "section": "3.2",
+        "blueprint_eq": "Eq. (11)",
+        "formula_latex": r"CRS(c,i,t) = 1 - \frac{\mathrm{Rank}(c,i,t) - 1}{|C| - 1}",
+        "formula_plain": (
+            "Within a given country, rank commodities by per-capita consumption "
+            "(descending); rescale to 0–1 so the most-consumed commodity scores "
+            "1 and the least scores 0."
+        ),
+        "inputs": ["PCC for all commodities in the country"],
+        "definition": (
+            "Where this commodity sits in the destination country's dietary "
+            "basket. Normalised rank > raw PCC because different commodities "
+            "operate on vastly different consumption scales (e.g. 200 kg of "
+            "cereals vs 2 kg of spices) — both can be a top-rank staple "
+            "depending on the country."
+        ),
+        "scale": [
+            {"min": 0.00, "max": 0.25, "label": "Low-rank commodity", "band": _LOW,
+             "advice": "Among the less-consumed commodities for this destination."},
+            {"min": 0.25, "max": 0.50, "label": "Below-median rank", "band": _LOW,
+             "advice": "Moderate dietary importance."},
+            {"min": 0.50, "max": 0.75, "label": "Above-median rank", "band": _MED,
+             "advice": "An important commodity in the country's diet."},
+            {"min": 0.75, "max": 1.01, "label": "Top-rank staple", "band": _HIGH,
+             "advice": "Among the most-consumed commodities — disruption hits many people."},
+        ],
+        "when_matters": (
+            "When weighting demand-side exposure for the priority score "
+            "(CVS) — lanes carrying a staple commodity rank higher."
+        ),
+        "related": ["pcc", "dis", "cvs", "orps"],
         "source": "defensefood_core::consumption::compute_crs_batch",
+    },
+    {
+        "key": "dis",
+        "name": "Demand inelasticity",
+        "abbr": "DIS",
+        "section": "3.3",
+        "blueprint_eq": "Eq. (12)/(13)",
+        "formula_latex": (
+            r"CVD = \frac{\sigma_{PCC}}{\mu_{PCC}};\quad "
+            r"DIS = 1 - \min(CVD,\,1)"
+        ),
+        "formula_plain": (
+            "Coefficient of variation of per-capita consumption over a "
+            "rolling 5-year window, inverted: stable demand (low variance) "
+            "gives DIS near 1; volatile demand gives DIS near 0."
+        ),
+        "inputs": ["PCC time series (5-year window)"],
+        "definition": (
+            "Captures cultural entrenchment of a commodity. High DIS = "
+            "consumers buy this regardless of price or quality scares; the "
+            "demand floor is rigid, which makes the market more fraud-"
+            "exploitable. Low DIS = swing demand that fraudsters can't rely on."
+        ),
+        "scale": [
+            {"min": 0.00, "max": 0.50, "label": "Volatile demand", "band": _LOW,
+             "advice": "Consumption swings widely — substitutes available."},
+            {"min": 0.50, "max": 0.80, "label": "Moderately stable demand", "band": _MED,
+             "advice": "Some price/quality sensitivity in this market."},
+            {"min": 0.80, "max": 0.95, "label": "Stable demand", "band": _HIGH,
+             "advice": "Embedded in the diet; consumers stick with it through shocks."},
+            {"min": 0.95, "max": 1.01, "label": "Highly inelastic demand", "band": _HIGH,
+             "advice": "Culturally entrenched — maximally exploitable for fraud."},
+        ],
+        "when_matters": (
+            "When identifying commodities where fraud has a stable consumer "
+            "base — high DIS lanes face sustained incentive pressure."
+        ),
+        "related": ["pcc", "crs", "cvs"],
+        "source": "defensefood_core::consumption::compute_dis",
     },
     # ── Section 4: Hazard ──────────────────────────────────────────────
     {
@@ -352,47 +431,65 @@ METHODOLOGY: list[dict[str, Any]] = [
     },
     {
         "key": "dgi",
-        "name": "Detection gap",
+        "name": "Detection gap indicator",
         "abbr": "DGI",
-        "section": "4.3",
-        "blueprint_eq": "Sec. 4.3",
+        "section": "4.5",
+        "blueprint_eq": "Eq. (19)",
         "formula_latex": (
-            r"DGI = \frac{N_{ij}/N_{i\cdot}}{M_{ij}/M_{i\cdot}}"
+            r"DGI(c,i,j,t) = \frac{M(c,i,j,t)}{M(c,i,\cdot,t)} - \frac{R(c,i,j,t)}{R(c,i,\cdot,t)}"
         ),
-        "formula_plain": "Notification share of a lane divided by its trade share.",
-        "inputs": ["Notification share", "Trade share"],
+        "formula_plain": (
+            "The lane's share of trade minus its share of notifications — a "
+            "signed gap in roughly [−1, +1]. Positive = trade share exceeds "
+            "notification share (potentially under-inspected); negative = "
+            "over-represented in problems relative to trade volume."
+        ),
+        "inputs": [
+            "M_ij (bilateral imports)", "M (total imports for destination)",
+            "R_ij (lane notifications)", "R (total notifications for destination)",
+        ],
         "definition": (
-            "<1 = under-reported relative to trade volume; >1 = over-reported. "
-            "Helps detect lanes where inspection signals don't match trade flow."
+            "Compares a lane's share of trade volume to its share of RASFF "
+            "notifications. A corridor moving large volumes but generating few "
+            "alerts may be genuinely cleaner — or under-inspected. Combined "
+            "with high Bilateral dependency (BDI) it's a flag for "
+            "under-detection on a fragile lane."
         ),
         "scale": [
-            {"min": 0.00, "max": 0.50, "label": "Under-reported", "band": _MED,
-             "advice": "Notification share is well below trade share — possible inspection gap."},
-            {"min": 0.50, "max": 1.50, "label": "Reporting aligned", "band": _LOW,
-             "advice": "Notification share tracks trade share roughly."},
-            {"min": 1.50, "max": 1e9, "label": "Over-reported", "band": _HIGH,
-             "advice": "Notification rate exceeds trade share — concentrated attention."},
+            {"min": -1.01, "max": -0.40, "label": "Heavily over-reported", "band": _HIGH,
+             "advice": "Notification rate far exceeds trade share — already under intense scrutiny."},
+            {"min": -0.40, "max": -0.10, "label": "Over-represented in alerts", "band": _MED,
+             "advice": "Lane gets more attention than its trade share would predict."},
+            {"min": -0.10, "max": 0.10, "label": "Reporting aligned with trade", "band": _LOW,
+             "advice": "Notification share roughly tracks trade share."},
+            {"min": 0.10, "max": 0.40, "label": "Possibly under-inspected", "band": _MED,
+             "advice": "Trade share exceeds notification share — worth a sampling check."},
+            {"min": 0.40, "max": 1.01, "label": "Strong inspection gap", "band": _HIGH,
+             "advice": "Large trade flow with little alert activity — strong under-detection signal, especially with high BDI."},
         ],
         "when_matters": (
-            "When checking whether a lane is under- or over-reported relative "
-            "to its trade volume."
+            "When asking 'is this lane really clean, or are we just not "
+            "looking?' — combine with BDI to flag under-detection on lanes "
+            "with high structural dependency."
         ),
-        "related": ["his"],
+        "related": ["his", "bdi"],
         "source": "defensefood_core::hazard::compute_dgi",
     },
-    # ── Section 5: Trade Flow ───────────────────────────────────────────
+    # ── Section 5: Trade Flow Analysis ──────────────────────────────────
     {
         "key": "z_uv",
         "name": "Unit-price z-score",
         "abbr": "z(UV)",
         "section": "5.1",
-        "blueprint_eq": "Sec. 5.1",
+        "blueprint_eq": "Eq. (23)",
         "formula_latex": r"z_{UV}(c,i,j,t) = \frac{UV_{ij} - \mu_{UV_{i\cdot}}}{\sigma_{UV_{i\cdot}}}",
-        "formula_plain": "How many standard deviations the lane's unit price is from peer mean.",
-        "inputs": ["UV = primaryValue / netWgt", "peer mean / std"],
+        "formula_plain": "How many standard deviations the lane's per-kg price sits from the mean across peer origins.",
+        "inputs": ["UV = primaryValue / netWgt", "peer mean / std across origins"],
         "definition": (
-            "How far this lane's per-kg price deviates from peer partners on the "
-            "same import market. |z| > 2 is unusual."
+            "How far this lane's per-kg import price deviates from peer "
+            "partners feeding the same destination. |z| > 2 is unusual. "
+            "Z < −2 suggests adulteration / substitution / misdeclaration; "
+            "z > +2 suggests premium-claim fraud."
         ),
         "scale": [
             {"min": -1e9, "max": -2.0, "label": "Priced far below peers", "band": _FLAG,
@@ -409,50 +506,107 @@ METHODOLOGY: list[dict[str, Any]] = [
         "when_matters": (
             "When spotting lanes worth a targeted price-fraud check."
         ),
-        "related": ["his"],
+        "related": ["his", "mtd"],
         "source": "defensefood_core::trade_flow::compute_unit_value_zscore_batch",
+    },
+    {
+        "key": "z_volume",
+        "name": "Volume anomaly z-score",
+        "abbr": "z(M)",
+        "section": "5.2",
+        "blueprint_eq": "Eq. (24-26)",
+        "formula_latex": (
+            r"z_M(c,i,j,t) = \frac{M(c,i,j,t) - \mu_M(c,i,j)}{\sigma_M(c,i,j)}"
+            r"\quad\text{over rolling window of }k\text{ prior periods}"
+        ),
+        "formula_plain": (
+            "How many standard deviations this period's import volume sits "
+            "from the corridor's own historical mean. Uses a rolling k-period "
+            "window (default k=5)."
+        ),
+        "inputs": ["M(c,i,j,τ) time series (one value per past period)"],
+        "definition": (
+            "Detects volume surges or collapses against the corridor's own "
+            "trade history. z > +2 indicates a trade surge that warrants "
+            "investigation for re-routing, fraudulent volume inflation, or "
+            "origin laundering. Requires ≥ k+1 prior periods of data; "
+            "returns NaN until enough history is ingested."
+        ),
+        "scale": [
+            {"min": -1e9, "max": -2.0, "label": "Volume collapse", "band": _FLAG,
+             "advice": "Large drop vs. corridor history — check for substitution or origin shift elsewhere."},
+            {"min": -2.0, "max": -1.0, "label": "Below trend", "band": _MED,
+             "advice": "Imports below normal range; possible disruption."},
+            {"min": -1.0, "max": 1.0, "label": "Within normal range", "band": _LOW,
+             "advice": "Volume tracks the corridor's historical pattern."},
+            {"min": 1.0, "max": 2.0, "label": "Above trend", "band": _MED,
+             "advice": "Mild surge — note origin and price together."},
+            {"min": 2.0, "max": 1e9, "label": "Trade surge", "band": _FLAG,
+             "advice": "Large jump vs. history — possible re-routing, volume inflation, or origin laundering."},
+        ],
+        "when_matters": (
+            "When detecting trade-pattern shifts that aren't visible from a "
+            "single period's snapshot."
+        ),
+        "related": ["delta_ocs", "delta_hhi"],
+        "source": "defensefood_core::trade_flow::compute_volume_anomaly",
     },
     {
         "key": "mtd",
         "name": "Mirror trade discrepancy",
         "abbr": "MTD",
-        "section": "5.2",
-        "blueprint_eq": "Sec. 5.2",
-        "formula_latex": r"MTD = \frac{M_{reported} - X_{reported}}{(M_{reported} + X_{reported}) / 2}",
-        "formula_plain": "Symmetric relative gap between reporter and partner reported volumes.",
-        "inputs": ["M (reporter imports)", "X (partner exports)"],
+        "section": "5.3",
+        "blueprint_eq": "Eq. (27)",
+        "formula_latex": (
+            r"MTD(c,i,j,t) = \frac{\left|M_i(c,i,j,t) - X_j(c,j,i,t)\right|}"
+            r"{\max\!\left(M_i,\;X_j\right)}"
+        ),
+        "formula_plain": (
+            "Absolute gap between what the destination reports importing and "
+            "what the origin reports exporting, divided by the larger of the "
+            "two. Bounded in [0, 1]."
+        ),
+        "inputs": ["M_i (destination reports imports)", "X_j (origin reports exports)"],
         "definition": (
-            "Symmetric relative gap between reporter and partner reported volumes. "
-            "Large gaps point to reporting issues worth checking."
+            "Trade data is reported by both sides. Legitimate CIF/FOB and "
+            "timing differences typically give 5-15% discrepancy. Gaps "
+            "above 30% warrant investigation; persistent large discrepancies "
+            "over multiple periods are a strong fraud signal."
         ),
         "scale": [
             {"min": 0.00, "max": 0.10, "label": "Aligned", "band": _LOW,
              "advice": "Reporter and partner figures agree."},
             {"min": 0.10, "max": 0.30, "label": "Small reporting gap", "band": _LOW,
-             "advice": "Minor difference within typical noise."},
+             "advice": "Minor difference within typical CIF/FOB / timing noise."},
             {"min": 0.30, "max": 0.50, "label": "Notable reporting gap", "band": _MED,
              "advice": "Verify which side's figure to trust."},
-            {"min": 0.50, "max": 1e9, "label": "Sharp divergence", "band": _FLAG,
+            {"min": 0.50, "max": 1.01, "label": "Sharp divergence", "band": _FLAG,
              "advice": "Volumes diverge sharply — verify both sides."},
         ],
         "when_matters": (
             "When deciding whether reporter or partner figures look more "
             "reliable for a lane."
         ),
-        "related": ["idr"],
+        "related": ["idr", "z_uv"],
         "source": "defensefood_core::trade_flow::compute_mtd",
     },
     {
         "key": "delta_hhi",
         "name": "Concentration change",
         "abbr": "ΔHHI",
-        "section": "5.3",
-        "blueprint_eq": "Sec. 5.3",
-        "formula_latex": r"\Delta HHI = HHI_t - HHI_{t-1}",
-        "formula_plain": "Change in supplier concentration vs the prior period.",
-        "inputs": ["HHI current period", "HHI prior period"],
+        "section": "5.4",
+        "blueprint_eq": "Eq. (28)",
+        "formula_latex": r"\Delta HHI(c,i,t) = HHI(c,i,t) - HHI(c,i,t-1)",
+        "formula_plain": (
+            "Change in destination's supplier concentration (HHI) versus the "
+            "prior period. Positive = consolidating onto fewer suppliers; "
+            "negative = diversifying."
+        ),
+        "inputs": ["HHI(t) current period", "HHI(t−1) prior period"],
         "definition": (
-            "Positive = consolidating onto fewer suppliers; negative = diversifying."
+            "Monitors structural changes in import concentration over time. "
+            "A sudden rise in HHI combined with a new or rapidly growing "
+            "corridor signals potential re-routing."
         ),
         "scale": [
             {"min": -1e9, "max": -0.10, "label": "Diversifying", "band": _LOW,
@@ -469,8 +623,46 @@ METHODOLOGY: list[dict[str, Any]] = [
         "when_matters": (
             "When detecting market consolidation that increases lane-level vulnerability."
         ),
-        "related": ["hhi"],
+        "related": ["hhi", "delta_ocs"],
         "source": "defensefood_core::trade_flow::compute_delta_hhi",
+    },
+    {
+        "key": "delta_ocs",
+        "name": "Origin share change",
+        "abbr": "ΔOCS",
+        "section": "5.4",
+        "blueprint_eq": "Eq. (29)",
+        "formula_latex": r"\Delta OCS(c,i,j,t) = OCS(c,i,j,t) - OCS(c,i,j,t-1)",
+        "formula_plain": (
+            "Change in this specific origin's share of the destination's "
+            "imports versus the prior period. Positive = origin gaining "
+            "share; negative = losing share."
+        ),
+        "inputs": ["OCS(j,t) current period", "OCS(j,t−1) prior period"],
+        "definition": (
+            "Per-origin counterpart to ΔHHI. A rapid increase in OCS for a "
+            "previously minor origin — especially while a traditionally "
+            "dominant origin's OCS decreases — is a structural shift "
+            "warranting investigation for re-routing or origin laundering."
+        ),
+        "scale": [
+            {"min": -1e9, "max": -0.20, "label": "Losing share fast", "band": _MED,
+             "advice": "This origin's role is shrinking sharply — note where the share went."},
+            {"min": -0.20, "max": -0.05, "label": "Losing share", "band": _LOW,
+             "advice": "Modest decline in this origin's contribution."},
+            {"min": -0.05, "max": 0.05, "label": "Stable share", "band": _LOW,
+             "advice": "Origin's contribution to imports is roughly unchanged."},
+            {"min": 0.05, "max": 0.20, "label": "Gaining share", "band": _MED,
+             "advice": "Origin growing in importance — check unit price and notification activity."},
+            {"min": 0.20, "max": 1e9, "label": "Surging share", "band": _HIGH,
+             "advice": "Origin gaining share rapidly — possible re-routing signal."},
+        ],
+        "when_matters": (
+            "When tracking which origins are gaining or losing share, "
+            "especially in concentrated markets."
+        ),
+        "related": ["ocs", "delta_hhi", "z_volume"],
+        "source": "defensefood_core::trade_flow::compute_delta_ocs",
     },
     # ── Section 6: Network ──────────────────────────────────────────────
     {
@@ -569,6 +761,69 @@ METHODOLOGY: list[dict[str, Any]] = [
         ),
         "related": ["sci", "his", "crs"],
         "source": "defensefood_core::scoring::score_hybrid",
+    },
+    # ── Methodology disclosure: corridor membership semantics ───────────
+    # Not a metric — a first-class explanation of how RASFF roles map to
+    # Comtrade "destination" and what that join does (and does not) mean.
+    {
+        "key": "corridor_membership",
+        "name": "Corridor membership semantics",
+        "abbr": "Membership",
+        "section": "Methodology",
+        "blueprint_eq": "Sec. 4.1 join rule",
+        "formula_latex": (
+            r"\text{corridor}(c,i,j) = \{\text{RASFF}_{c,i,j}\} "
+            r"\;\bowtie\;\{\text{Comtrade}_{c,i,j}\}"
+        ),
+        "formula_plain": (
+            "A lane is a (commodity, destination, origin) triple. RASFF decides "
+            "which lanes exist and what hazard signal they carry. Comtrade is "
+            "looked up separately on the same key for structural metrics. We do "
+            "not trace a specific RASFF batch through customs."
+        ),
+        "inputs": [
+            "RASFF role columns (notifying_country, distribution, for_followUp, for_attention)",
+            "Comtrade bilateral flow (reporter = destination, partner = origin)",
+        ],
+        "definition": (
+            "Per EU RASFF SOPs (Regulation 16/2011) each notification carries up "
+            "to four role columns that mean different things about market presence:\n\n"
+            "• distribution — product was physically shipped to this country.\n"
+            "• for_followUp — product is or may be placed on this country's market; "
+            "follow-up notifications mirror alerts in market-presence implication.\n"
+            "• notifying_country — country detected/reported the hazard. Often "
+            "(not always) the importer that caught it at the border or in market.\n"
+            "• for_attention — informational only: product is NOT on this market "
+            "(only in the notifying country, no longer on the market, or never "
+            "placed on the market).\n\n"
+            "The system stamps every corridor with a market_presence label derived "
+            "deterministically from its role set:\n\n"
+            "• confirmed — at least one of distribution/followUp. Structural "
+            "dependency (Section 2) and trade-flow (Section 5) metrics are "
+            "meaningful for this lane.\n"
+            "• detected — notifier-only. Comtrade dependency may still apply (if "
+            "notifier is the importer), but read with caution.\n"
+            "• informational — attention-only. Per RASFF, the product is not on "
+            "this market; Comtrade lookups on this lane answer a question RASFF "
+            "explicitly did not ask. SCI/CVS are shown for transparency but should "
+            "not drive priority decisions.\n\n"
+            "What this join does NOT prove: we do not match a specific RASFF lot "
+            "to a specific customs entry. The corridor is a structural+hazard "
+            "shared key, not a supply-chain trace."
+        ),
+        # No scale bands — this is a categorical disclosure, not a numeric metric.
+        "scale": [],
+        "when_matters": (
+            "Always. Before acting on any structural metric, check the lane's "
+            "market_presence — 'informational' lanes should be excluded from "
+            "inspection planning and weighted down in research aggregates."
+        ),
+        "related": ["sci", "bdi", "cvs", "ds_prime"],
+        "source": (
+            "EU Regulation 16/2011 (RASFF) · BVL Germany RASFF reference · "
+            "Pan et al., 'Role-aware directed networks in food-fraud RASFF data', "
+            "Discover Food 2025"
+        ),
     },
 ]
 

@@ -36,6 +36,7 @@ class SafeJSONResponse(JSONResponse):
         return super().render(_sanitize_floats(content))
 
 from defensefood.api.dependencies import get_state, refresh_coverage
+from defensefood.pipeline.data_quality import annotate_corridors_data_quality
 from defensefood.pipeline.scoring_pipeline import run_scoring_pipeline
 
 
@@ -47,6 +48,8 @@ def _cors_allow_origins() -> list[str]:
     return [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:5000",
+        "http://127.0.0.1:5000",
     ]
 from defensefood.api.routers import (
     commodities,
@@ -74,8 +77,8 @@ async def lifespan(app: FastAPI):
             state.scoring_config,
         )
         print(f"Initial CVS scoring applied to {len(state.corridor_metrics)} corridors")
-        # CVS just landed on corridor_metrics; refresh coverage so the
-        # research workbench reports the right cvs-available count.
+        annotate_corridors_data_quality(state.corridor_metrics)
+        # CVS + data-quality labels landed; refresh coverage counts.
         refresh_coverage(state)
     yield
 

@@ -80,6 +80,37 @@ DESTINATION_ROLE_COLUMNS: tuple[tuple[str, str], ...] = (
 # the product. Used to distinguish "strong" corridor signal from passive mentions.
 ACTIVE_ROLES: frozenset[str] = frozenset({"notifier", "distribution", "followUp"})
 
+# Roles whose RASFF definition affirms the product is (or may be) on the destination
+# market. EU SOPs treat distribution and for_followUp as market-presence evidence;
+# notifier-only means the country detected the hazard but does not by itself prove
+# market presence; for_attention means the product is NOT on this market.
+MARKET_PRESENCE_ROLES: frozenset[str] = frozenset({"distribution", "followUp"})
+
+
+def market_presence_from_roles(roles) -> str:
+    """Classify a corridor's destination by RASFF role semantics.
+
+    Returns one of:
+      * ``"confirmed"``     — distribution and/or followUp present: product
+                              IS or MAY BE on this market (EU SOP definition).
+      * ``"detected"``      — notifier-only (no distribution/followUp): country
+                              detected the hazard but no distribution evidence —
+                              treat as possibly the importer that caught it.
+      * ``"informational"`` — attention-only: per RASFF, product is NOT on this
+                              country's market (only in notifier, no longer on
+                              market, or never placed on market). Structural
+                              dependency metrics are not meaningful for the lane.
+      * ``"unknown"``       — empty role set (defensive; shouldn't occur).
+    """
+    rs = set(roles) if not isinstance(roles, (set, frozenset)) else roles
+    if rs & MARKET_PRESENCE_ROLES:
+        return "confirmed"
+    if "notifier" in rs:
+        return "detected"
+    if "attention" in rs:
+        return "informational"
+    return "unknown"
+
 
 def _get_rasff_path() -> Path:
     """Resolve path to the RASFF Excel relative to this package."""

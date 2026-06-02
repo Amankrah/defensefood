@@ -113,6 +113,32 @@ export function interpretHdi(hdi: number | null | undefined): Verdict {
   return { verdict: "Single hazard family or no alerts.", band: "low" };
 }
 
+/** Detection Gap Indicator (Section 4.5) — signed gap roughly [-1, +1]. */
+export function interpretDgi(dgi: number | null | undefined): Verdict {
+  if (!isNum(dgi)) return NA;
+  if (dgi >= 0.4)
+    return {
+      verdict: "Large trade flow with little alert activity — strong under-detection signal.",
+      band: "high",
+    };
+  if (dgi >= 0.1)
+    return {
+      verdict: "Trade share exceeds notification share — possibly under-inspected.",
+      band: "med",
+    };
+  if (dgi >= -0.1)
+    return { verdict: "Notification share roughly tracks trade share.", band: "low" };
+  if (dgi >= -0.4)
+    return {
+      verdict: "Lane gets more attention than its trade share would predict.",
+      band: "med",
+    };
+  return {
+    verdict: "Notification rate far exceeds trade share — already under intense scrutiny.",
+    band: "high",
+  };
+}
+
 /** Unit-price z-score (Section 5). */
 export function interpretZuv(z: number | null | undefined): Verdict {
   if (!isNum(z)) return NA;
@@ -141,6 +167,39 @@ export function interpretMtd(mtd: number | null | undefined): Verdict {
   return { verdict: "Reporter and partner figures align.", band: "low" };
 }
 
+/** Volume anomaly z-score on a corridor's own import history (Section 5.2). */
+export function interpretVolume(z: number | null | undefined): Verdict {
+  if (!isNum(z)) return NA;
+  if (z >= 2)
+    return {
+      verdict: "Trade surge — large jump vs. corridor history; possible re-routing.",
+      band: "flag",
+    };
+  if (z >= 1) return { verdict: "Volume mildly above the corridor's trend.", band: "med" };
+  if (z >= -1) return { verdict: "Volume tracks the corridor's historical pattern.", band: "low" };
+  if (z >= -2) return { verdict: "Volume below the corridor's trend.", band: "med" };
+  return {
+    verdict: "Volume collapse vs. history — check for substitution or origin shift.",
+    band: "flag",
+  };
+}
+
+/** Origin share change ΔOCS (Section 5.4) — sign-aware. */
+export function interpretDeltaOcs(delta: number | null | undefined): Verdict {
+  if (!isNum(delta)) return NA;
+  if (delta >= 0.20)
+    return { verdict: "Surging share — possible re-routing signal.", band: "high" };
+  if (delta >= 0.05) return { verdict: "Origin gaining share in the import mix.", band: "med" };
+  if (delta >= -0.05)
+    return { verdict: "Origin's contribution to imports roughly unchanged.", band: "low" };
+  if (delta >= -0.20)
+    return { verdict: "Origin's share modestly declining.", band: "low" };
+  return {
+    verdict: "Origin losing share fast — note where the share moved.",
+    band: "med",
+  };
+}
+
 /** Concentration change ΔHHI — sign-aware. */
 export function interpretDeltaHhi(delta: number | null | undefined): Verdict {
   if (!isNum(delta)) return NA;
@@ -152,6 +211,33 @@ export function interpretDeltaHhi(delta: number | null | undefined): Verdict {
   if (delta <= -0.03)
     return { verdict: "Mildly diversifying vs the prior window.", band: "low" };
   return { verdict: "Concentration roughly unchanged.", band: "low" };
+}
+
+/** Per-capita apparent consumption (kg/capita/year). */
+export function interpretPcc(pcc: number | null | undefined): Verdict {
+  if (!isNum(pcc)) return NA;
+  if (pcc >= 50) return { verdict: "Staple-level consumption per person.", band: "high" };
+  if (pcc >= 10) return { verdict: "Notable share of the average diet.", band: "med" };
+  if (pcc >= 1) return { verdict: "Modest dietary role.", band: "low" };
+  return { verdict: "Niche or minimal consumption.", band: "low" };
+}
+
+/** Commodity consumption rank within a country (0-1). */
+export function interpretCrs(crs: number | null | undefined): Verdict {
+  if (!isNum(crs)) return NA;
+  if (crs >= 0.75) return { verdict: "Top-rank staple in this country's diet.", band: "high" };
+  if (crs >= 0.50) return { verdict: "Above-median dietary importance.", band: "med" };
+  if (crs >= 0.25) return { verdict: "Mid-rank commodity in the local basket.", band: "low" };
+  return { verdict: "Low-rank commodity for this destination.", band: "low" };
+}
+
+/** Demand inelasticity (0-1; high = stable / culturally entrenched). */
+export function interpretDis(dis: number | null | undefined): Verdict {
+  if (!isNum(dis)) return NA;
+  if (dis >= 0.95) return { verdict: "Highly inelastic — culturally entrenched, maximally exploitable.", band: "high" };
+  if (dis >= 0.80) return { verdict: "Stable demand — consumers stick with it through shocks.", band: "high" };
+  if (dis >= 0.50) return { verdict: "Moderately stable demand pattern.", band: "med" };
+  return { verdict: "Volatile demand — substitutes available, swing-y consumption.", band: "low" };
 }
 
 /** ACEP — country-level inbound exposure. Coarse heuristic until we calibrate. */

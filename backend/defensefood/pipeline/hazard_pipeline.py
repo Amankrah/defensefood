@@ -207,7 +207,7 @@ def run_hazard_pipeline(
         current_period = max(periods) if periods else 202600
 
     # Aggregate destination roles per corridor key across all notifications
-    from defensefood.ingestion.rasff import ACTIVE_ROLES
+    from defensefood.ingestion.rasff import ACTIVE_ROLES, market_presence_from_roles
 
     roles_by_corridor: dict[tuple[str, int, int], set[str]] = {}
     role_counts_by_corridor: dict[tuple[str, int, int], dict[str, int]] = {}
@@ -246,6 +246,7 @@ def run_hazard_pipeline(
         metrics["destination_roles"] = sorted(roles)
         metrics["role_counts"] = role_counts_by_corridor.get(key, {})
         metrics["is_active_destination"] = bool(roles & ACTIVE_ROLES)
+        metrics["market_presence"] = market_presence_from_roles(roles)
 
         corridor_metrics.append(metrics)
 

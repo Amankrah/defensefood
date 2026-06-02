@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { CoverageReport } from "@/lib/types";
+import { sciReasonShort } from "@/lib/dataQuality";
 import { fmtInt } from "@/lib/utils";
 
 function Pct({ num, den }: { num: number; den: number }) {
@@ -93,6 +94,70 @@ export default function Coverage() {
           </div>
         ))}
       </section>
+
+      {(data.corridors_by_data_quality || data.sci_unavailable_by_reason) && (
+        <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+          {data.corridors_by_data_quality ? (
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h2 className="mb-1 text-sm font-semibold text-slate-900">
+                Lane data quality
+              </h2>
+              <p className="mb-3 text-[11px] text-slate-500">
+                Whether each corridor has a full CVS (structural + hazard) or hazard-only
+                fallback when SCI cannot be computed.
+              </p>
+              <ul className="space-y-2 text-xs">
+                {(
+                  [
+                    ["full", "Full CVS (SCI + hazard)"],
+                    ["hazard_only", "Hazard-only (no SCI/CVS)"],
+                    ["partial", "Partial structural"],
+                    ["unavailable", "No scores"],
+                  ] as const
+                ).map(([tier, label]) => {
+                  const n = data.corridors_by_data_quality?.[tier] ?? 0;
+                  if (n <= 0) return null;
+                  return (
+                    <li key={tier} className="flex items-baseline justify-between gap-3">
+                      <span className="text-slate-700">{label}</span>
+                      <span className="font-mono text-slate-900">
+                        {fmtInt(n)}
+                        <Pct num={n} den={total} />
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+
+          {data.sci_unavailable_by_reason ? (
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h2 className="mb-1 text-sm font-semibold text-slate-900">
+                Why SCI is missing
+              </h2>
+              <p className="mb-3 text-[11px] text-slate-500">
+                Machine-readable reasons attached to lanes without supply criticality.
+              </p>
+              <ul className="space-y-2 text-xs">
+                {Object.entries(data.sci_unavailable_by_reason)
+                  .sort(([, a], [, b]) => (b ?? 0) - (a ?? 0))
+                  .map(([reason, n]) => (
+                    <li key={reason} className="flex items-baseline justify-between gap-3">
+                      <span className="text-slate-700">
+                        {sciReasonShort(reason) ?? reason}
+                      </span>
+                      <span className="font-mono text-slate-900">
+                        {fmtInt(n ?? 0)}
+                        <Pct num={n ?? 0} den={total} />
+                      </span>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : null}
+        </section>
+      )}
 
       <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

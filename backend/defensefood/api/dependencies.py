@@ -18,9 +18,14 @@ from defensefood.ingestion.faostat import FaostatStore, load_faostat_store
 from defensefood.ingestion.hs_codes import normalize_hs
 from defensefood.ingestion.rasff import Corridor, RasffSummary, extract_corridors, load_rasff_data
 from defensefood.models.scores import ScoringConfig
-from defensefood.pipeline.consumption_pipeline import compute_crs_lookup
+from defensefood.pipeline.consumption_pipeline import compute_consumption_lookups
+from defensefood.pipeline.data_quality import count_by_reason
 from defensefood.pipeline.dependency_pipeline import run_dependency_pipeline
-from defensefood.pipeline.hazard_pipeline import build_notifications, compute_corridor_hazard
+from defensefood.pipeline.hazard_pipeline import (
+    build_notifications,
+    compute_corridor_hazard,
+    compute_dgi_for_corridor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +57,9 @@ class AppState:
     notifications_by_corridor: dict[tuple[str, int, int], list[dict]] = field(default_factory=dict)
     # coverage: data-quality / coverage diagnostics
     coverage: dict = field(default_factory=dict)
+    # Section 3 lookups by (hs, destination_m49) -> value. Populated alongside dependency.
+    pcc_lookup: dict[tuple[str, int], float] = field(default_factory=dict)
+    dis_lookup: dict[tuple[str, int], float] = field(default_factory=dict)
 
 
 _state: Optional[AppState] = None
@@ -97,7 +105,7 @@ def _load_data(state: AppState) -> None:
                 hazard_category_map[c.reference] = c.hazard_category
 
         # Aggregate destination roles per corridor across notifications
-        from defensefood.ingestion.rasff import ACTIVE_ROLES
+        from defensefood.ingestion.rasff import ACTIVE_ROLES, market_presence_from_roles
         roles_by_corridor: dict[tuple[str, int, int], set[str]] = {}
         role_counts_by_corridor: dict[tuple[str, int, int], dict[str, int]] = {}
         for c in state.corridors:
@@ -136,6 +144,7 @@ def _load_data(state: AppState) -> None:
             metrics["destination_roles"] = sorted(roles)
             metrics["role_counts"] = role_counts_by_corridor.get(key, {})
             metrics["is_active_destination"] = bool(roles & ACTIVE_ROLES)
+            metrics["market_presence"] = market_presence_from_roles(roles)
 
             state.corridor_metrics.append(metrics)
 
@@ -169,7 +178,13 @@ def _enrich_dependency_consumption(state: AppState) -> None:
         dep = run_dependency_pipeline(state.trade_df, keys, state.faostat, trade_period)
     state.trade_period = trade_period
 
-    crs_lookup = compute_crs_lookup(state.faostat, trade_period or None)
+    # Section 3 in one pass — PCC (kg/capita/yr), CRS (rank), DIS (inelasticity).
+    pcc_lookup, crs_lookup, dis_lookup = compute_consumption_lookups(
+        state.faostat, trade_period or None
+    )
+    # Cache lookups on state so the network / ORPS path can read them too.
+    state.pcc_lookup = pcc_lookup
+    state.dis_lookup = dis_lookup
 
     enriched = 0
     for m in state.corridor_metrics:
@@ -184,15 +199,49 @@ def _enrich_dependency_consumption(state: AppState) -> None:
             m["dependency_error"] = d["error"]
 
         hs_norm = normalize_hs(m["commodity_hs"])
-        crs = crs_lookup.get((hs_norm, m["destination_m49"]))
+        consumption_key = (hs_norm, m["destination_m49"])
+        pcc = pcc_lookup.get(consumption_key)
+        if pcc is not None:
+            m["pcc"] = pcc
+        crs = crs_lookup.get(consumption_key)
         if crs is not None:
             m["crs"] = crs
+        dis = dis_lookup.get(consumption_key)
+        if dis is not None:
+            m["dis"] = dis
+
+    # ── Section 4.5 Detection Gap Indicator ────────────────────────────────
+    # DGI = trade_share − notification_share. Computed per corridor where the
+    # destination has both bilateral trade and at least one origin-attributable
+    # notification for the commodity; NaN/None otherwise.
+    dgi_count = 0
+    if state.notifications:
+        for m in state.corridor_metrics:
+            bilateral = m.get("bilateral_import_kg") or 0.0
+            total_imp = m.get("total_imports_kg") or 0.0
+            if bilateral <= 0 or total_imp <= 0:
+                continue
+            dgi = compute_dgi_for_corridor(
+                state.notifications,
+                m["commodity_hs"],
+                m["destination_m49"],
+                m["origin_m49"],
+                float(bilateral),
+                float(total_imp),
+            )
+            # Engine returns NaN when no notifications match — skip those.
+            if dgi == dgi:  # not NaN
+                m["dgi"] = dgi
+                dgi_count += 1
 
     logger.info(
         "Dependency enrichment: %d/%d corridors got Section 2 metrics (period=%s, faostat=%s); "
-        "%d destinations have CRS",
+        "Section 3 lookups: %d PCC keys, %d CRS keys, %d DIS keys; "
+        "Section 4.5 DGI populated for %d corridors",
         enriched, len(state.corridor_metrics), trade_period,
-        bool(state.faostat and state.faostat.available), len(crs_lookup),
+        bool(state.faostat and state.faostat.available),
+        len(pcc_lookup), len(crs_lookup), len(dis_lookup),
+        dgi_count,
     )
 
 
@@ -287,6 +336,10 @@ def refresh_coverage(state: AppState) -> None:
     n_with_dep = sum(1 for m in state.corridor_metrics if m.get("sci") is not None)
     n_with_crs = sum(1 for m in state.corridor_metrics if m.get("crs") is not None)
     n_idr_gt_1 = sum(1 for m in state.corridor_metrics if m.get("idr_gt_1"))
+    by_quality = {
+        tier: sum(1 for m in state.corridor_metrics if m.get("data_quality") == tier)
+        for tier in ("full", "hazard_only", "partial", "unavailable")
+    }
 
     summary = state.rasff_summary
     unmapped_origins = list(summary.unmapped_origins) if summary else []
@@ -321,6 +374,8 @@ def refresh_coverage(state: AppState) -> None:
         "corridors_with_crs": n_with_crs,
         "corridors_with_cvs": n_cvs,
         "corridors_idr_gt_1": n_idr_gt_1,
+        "corridors_by_data_quality": by_quality,
+        "sci_unavailable_by_reason": count_by_reason(state.corridor_metrics),
         "unmapped_origins": unmapped_origins,
         "unmapped_destinations": unmapped_dests,
         "trade_periods": trade_periods,

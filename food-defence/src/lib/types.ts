@@ -2,6 +2,16 @@
 
 export type RasffRole = "notifier" | "distribution" | "followUp" | "attention";
 
+/**
+ * RASFF role -> market-presence classification (per EU SOP / Regulation 16/2011):
+ *   confirmed     -- distribution and/or followUp: product IS or MAY BE on this market.
+ *   detected      -- notifier-only: country detected the hazard; market presence not asserted.
+ *   informational -- attention-only: product is NOT on this market (only in notifier,
+ *                    no longer on market, or never placed on market).
+ *   unknown       -- defensive default.
+ */
+export type MarketPresence = "confirmed" | "detected" | "informational" | "unknown";
+
 /** The six hazard taxonomy buckets we aggregate RASFF categories into. */
 export type HazardBucket =
   | "biological"
@@ -18,6 +28,15 @@ export type Provenance = "trade_only" | "faostat";
 
 /** How CVS was composed: full SCI·CRS·HIS vs the relaxed SCI+HIS base. */
 export type CvsMode = "sci_crs_his" | "sci_his" | null;
+
+export type DataQualityTier = "full" | "hazard_only" | "partial" | "unavailable";
+
+export type SciUnavailableReason =
+  | "no_trade_footprint"
+  | "ds_prime_error"
+  | "zero_destination_imports"
+  | "hhi_unavailable"
+  | "no_hazard_signal";
 
 export interface CorridorMetric {
   commodity_hs: string;
@@ -38,6 +57,8 @@ export interface CorridorMetric {
   role_counts?: Partial<Record<RasffRole, number>>;
   /** True if destination has any active role (notifier/distribution/followUp). */
   is_active_destination?: boolean;
+  /** Market-presence classification derived from RASFF role semantics. */
+  market_presence?: MarketPresence;
   // ── Section 2 dependency (attached at startup; null/absent when no trade) ──
   sci?: number | null;
   idr?: number | null;
@@ -53,8 +74,12 @@ export interface CorridorMetric {
   bilateral_import_kg?: number | null;
   total_imports_kg?: number | null;
   production_kg?: number | null;
-  /** Section 3 consumption rank (present only when FAOSTAT FBS is loaded). */
+  /** Section 3 per-capita apparent consumption (kg/capita/year). */
+  pcc?: number | null;
+  /** Section 3 commodity consumption rank within the destination (0-1). */
   crs?: number | null;
+  /** Section 3 demand inelasticity over 5-year window (0-1; high = stable). */
+  dis?: number | null;
   /** Combined vulnerability score. null when structural inputs are missing. */
   cvs?: number | null;
   /** Which inputs the CVS was built from. */
@@ -66,6 +91,12 @@ export interface CorridorMetric {
   sci_norm?: number | null;
   his_norm?: number | null;
   crs_norm?: number | null;
+  /** Why SCI/CVS may be absent (machine-readable). */
+  sci_unavailable_reason?: SciUnavailableReason | null;
+  /** Human-readable explanation for UI tooltips. */
+  sci_unavailable_label?: string | null;
+  /** full | hazard_only | partial | unavailable */
+  data_quality?: DataQualityTier;
 }
 
 // ── Section 2: Dependency ──
@@ -89,6 +120,17 @@ export interface DependencyMetrics {
   error?: string;
 }
 
+// ── Section 3: Consumption ──
+
+export interface ConsumptionMetrics {
+  /** Per-capita apparent consumption (kg/capita/year). */
+  pcc: number | null;
+  /** Commodity consumption rank within the destination (0–1). */
+  crs: number | null;
+  /** Demand inelasticity over 5-year window (0–1; high = stable). */
+  dis: number | null;
+}
+
 // ── Section 4: Hazard ──
 
 export interface HazardMetrics {
@@ -105,10 +147,16 @@ export interface HazardMetrics {
 export interface TradeFlowMetrics {
   unit_value?: number;
   z_uv?: number;
-  z_volume?: number;
+  /** Volume anomaly z-score (Section 5.2). NaN/null until ≥ k+1 periods of history exist. */
+  z_volume?: number | null;
+  /** Rolling-window size used by the engine (default 5). */
+  z_volume_window_k?: number;
+  /** Number of historical periods actually available for this corridor. */
+  z_volume_periods_available?: number;
   mtd?: number;
-  delta_hhi?: number;
-  delta_ocs?: number;
+  delta_hhi?: number | null;
+  /** Origin share change (Section 5.4). null when only one period is loaded. */
+  delta_ocs?: number | null;
   peer_unit_values?: { partnerCode: number; unit_value: number; z_uv: number }[];
 }
 
@@ -124,13 +172,18 @@ export interface CorridorProfile {
   destination_roles?: RasffRole[];
   role_counts?: Partial<Record<RasffRole, number>>;
   is_active_destination?: boolean;
+  market_presence?: MarketPresence;
   dependency?: DependencyMetrics;
+  consumption?: ConsumptionMetrics | null;
   hazard?: HazardMetrics;
   trade_flow?: TradeFlowMetrics;
   cvs?: number | null;
   cvs_mode?: CvsMode;
   cvs_hazard_only?: number | null;
   cvs_missing_inputs?: string[];
+  sci_unavailable_reason?: SciUnavailableReason | null;
+  sci_unavailable_label?: string | null;
+  data_quality?: DataQualityTier;
   sci_norm?: number | null;
   his_norm?: number | null;
   crs_norm?: number | null;
@@ -236,6 +289,7 @@ export interface RasffSummary {
   notifications_without_destination?: number;
   self_trade_pairs_skipped?: number;
   role_counts?: Record<RasffRole, number>;
+  market_presence_counts?: Record<MarketPresence, number>;
 }
 
 // ── Origin Risk ──
@@ -257,6 +311,8 @@ export interface CoverageReport {
   corridors_with_crs: number;
   corridors_with_cvs: number;
   corridors_idr_gt_1: number;
+  corridors_by_data_quality?: Partial<Record<DataQualityTier, number>>;
+  sci_unavailable_by_reason?: Partial<Record<SciUnavailableReason, number>>;
   unmapped_origins: string[];
   unmapped_destinations: string[];
   trade_periods: number[];

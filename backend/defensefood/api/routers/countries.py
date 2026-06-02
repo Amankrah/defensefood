@@ -58,10 +58,14 @@ def get_orps_by_commodity(
     m49: int,
     state: AppState = Depends(get_state),
 ):
-    """Origin Risk Propagation Score (Eq. 33) per commodity for this origin country.
+    """Origin Risk Propagation Score (Sec. 6.2) per commodity for this origin.
 
-    PCC is proxied as 1.0 per destination until FAOSTAT consumption is integrated.
+    Uses real per-capita consumption (PCC) from the Section 3 lookup whenever
+    available; falls back to 1.0 only for (commodity, destination) pairs
+    FAOSTAT doesn't cover. ``pcc_proxy`` flags lanes where the fallback fired.
     """
+    from defensefood.ingestion.hs_codes import normalize_hs
+
     name = get_country_name(m49)
     if not name:
         return {"error": "Country not found"}
@@ -81,7 +85,9 @@ def get_orps_by_commodity(
 
     net = build_exposure_network(state.corridor_metrics)
     rows = []
+    proxy_used = False
     for hs in hs_codes:
+        hs_norm = normalize_hs(hs)
         pcc: dict[int, float] = {}
         for c in state.corridor_metrics:
             if (
@@ -89,7 +95,13 @@ def get_orps_by_commodity(
                 and c.get("commodity_hs") == hs
                 and c.get("destination_m49")
             ):
-                pcc[int(c["destination_m49"])] = 1.0
+                dest = int(c["destination_m49"])
+                real = state.pcc_lookup.get((hs_norm, dest)) if hs_norm else None
+                if real is not None:
+                    pcc[dest] = real
+                else:
+                    pcc[dest] = 1.0
+                    proxy_used = True
         orps = net.compute_orps(m49, hs, pcc)
         rows.append({"commodity_hs": hs, "orps": orps})
 
@@ -97,7 +109,7 @@ def get_orps_by_commodity(
     return {
         "m49": m49,
         "name": name,
-        "pcc_proxy": True,
+        "pcc_proxy": proxy_used,
         "commodities": rows,
     }
 

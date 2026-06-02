@@ -10,7 +10,12 @@ from defensefood.pipeline.trade_flow_pipeline import (
     compute_concentration_shifts,
     compute_mirror_discrepancy,
     compute_unit_value_anomalies,
+    compute_volume_anomaly_for_corridor,
 )
+
+# Volume Anomaly rolling-window k (matches Rust default). The Lane report uses
+# this to decide between "real value" and "needs longer history" copy.
+_VOLUME_WINDOW_K = 5
 
 router = APIRouter(prefix="/corridors", tags=["corridors"])
 
@@ -31,6 +36,13 @@ def list_corridors(
     role: Optional[str] = Query(
         None,
         description="Filter to corridors with this role: notifier, distribution, followUp, attention",
+    ),
+    market_presence: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by RASFF market-presence semantics: confirmed (distribution/followUp), "
+            "detected (notifier-only), informational (attention-only)."
+        ),
     ),
     min_notification_count: Optional[int] = Query(
         None,
@@ -86,6 +98,8 @@ def list_corridors(
         results = [c for c in results if c.get("is_active_destination", False)]
     if role:
         results = [c for c in results if role in (c.get("destination_roles") or [])]
+    if market_presence:
+        results = [c for c in results if c.get("market_presence") == market_presence]
     if min_notification_count is not None:
         results = [
             c for c in results if c.get("notification_count", 0) >= min_notification_count
@@ -216,6 +230,7 @@ def get_corridor_full_profile(
             hazard = {
                 "his": c.get("his", 0),
                 "hdi": c.get("hdi", 0),
+                "dgi": c.get("dgi"),
                 "notification_count": c.get("notification_count", 0),
                 "severity_total": c.get("severity_total", 0),
                 "hazard_breakdown": c.get("hazard_breakdown", {}),
@@ -266,20 +281,44 @@ def get_corridor_full_profile(
             )
 
             delta_hhi = None
+            delta_ocs = None
             if len(periods) >= 2:
                 shifts = compute_concentration_shifts(
                     state.trade_df, commodity_hs, dest_m49,
                     int(periods[-1]), int(periods[-2]),
+                    origin_m49=origin_m49,
                 )
                 delta_hhi = shifts.get("delta_hhi")
+                delta_ocs = shifts.get("delta_ocs")
+
+            # 5.2 Volume anomaly — rolling-window z-score on the corridor's own
+            # import history. Returns NaN until ≥ k+1 periods of trade data are
+            # ingested; surface n_points so the UI can render an honest empty state.
+            z_volume, vol_n_points = compute_volume_anomaly_for_corridor(
+                state.trade_df, commodity_hs, dest_m49, origin_m49,
+                window_k=_VOLUME_WINDOW_K,
+            )
 
             trade_flow = {
                 "unit_value": unit_value,
                 "z_uv": z_uv,
+                "z_volume": z_volume,
+                "z_volume_window_k": _VOLUME_WINDOW_K,
+                "z_volume_periods_available": vol_n_points,
                 "mtd": mtd,
                 "delta_hhi": delta_hhi,
+                "delta_ocs": delta_ocs,
                 "peer_unit_values": peers,
             }
+
+    # Section 3 consumption block — present iff at least one metric resolved.
+    consumption = None
+    if any(base.get(k) is not None for k in ("pcc", "crs", "dis")):
+        consumption = {
+            "pcc": base.get("pcc"),
+            "crs": base.get("crs"),
+            "dis": base.get("dis"),
+        }
 
     response = {
         "commodity_hs": commodity_hs,
@@ -291,13 +330,18 @@ def get_corridor_full_profile(
         "destination_roles": base.get("destination_roles", []),
         "role_counts": base.get("role_counts", {}),
         "is_active_destination": base.get("is_active_destination", False),
+        "market_presence": base.get("market_presence", "unknown"),
         "dependency": dependency,
+        "consumption": consumption,
         "hazard": hazard,
         "trade_flow": trade_flow,
         "cvs": base.get("cvs"),
         "cvs_mode": base.get("cvs_mode"),
         "cvs_hazard_only": base.get("cvs_hazard_only"),
         "cvs_missing_inputs": base.get("cvs_missing_inputs", []),
+        "sci_unavailable_reason": base.get("sci_unavailable_reason"),
+        "sci_unavailable_label": base.get("sci_unavailable_label"),
+        "data_quality": base.get("data_quality"),
         "sci_norm": base.get("sci_norm"),
         "his_norm": base.get("his_norm"),
         "crs_norm": base.get("crs_norm"),
@@ -314,18 +358,27 @@ def get_corridor_full_profile(
                 if k in dependency:
                     flat[k] = dependency[k]
         if hazard:
-            for k in ("his", "hdi"):
-                if k in hazard:
+            for k in ("his", "hdi", "dgi"):
+                if k in hazard and hazard[k] is not None:
                     flat[k] = hazard[k]
         if trade_flow and "error" not in trade_flow:
-            tf_map = {"z_uv": "z_uv", "mtd": "mtd", "delta_hhi": "delta_hhi"}
+            tf_map = {
+                "z_uv": "z_uv",
+                "z_volume": "z_volume",
+                "mtd": "mtd",
+                "delta_hhi": "delta_hhi",
+                "delta_ocs": "delta_ocs",
+            }
             for k_src, k_dst in tf_map.items():
-                if k_src in trade_flow:
-                    flat[k_dst] = trade_flow[k_src]
+                v = trade_flow.get(k_src)
+                if v is not None:
+                    flat[k_dst] = v
         if response.get("cvs") is not None:
             flat["cvs"] = response["cvs"]
-        if base.get("crs") is not None:
-            flat["crs"] = base["crs"]
+        for k in ("pcc", "crs", "dis"):
+            v = base.get(k)
+            if v is not None:
+                flat[k] = v
         response["interpretations"] = interpret_corridor(flat)
 
     return response
@@ -368,18 +421,30 @@ def get_trade_anomalies(
     )
 
     delta_hhi = None
+    delta_ocs = None
     if len(periods) >= 2:
         shifts = compute_concentration_shifts(
             state.trade_df, commodity_hs, dest_m49,
             int(periods[-1]), int(periods[-2]),
+            origin_m49=origin_m49,
         )
         delta_hhi = shifts.get("delta_hhi")
+        delta_ocs = shifts.get("delta_ocs")
+
+    z_volume, vol_n_points = compute_volume_anomaly_for_corridor(
+        state.trade_df, commodity_hs, dest_m49, origin_m49,
+        window_k=_VOLUME_WINDOW_K,
+    )
 
     return {
         "unit_value": unit_value,
         "z_uv": z_uv,
+        "z_volume": z_volume,
+        "z_volume_window_k": _VOLUME_WINDOW_K,
+        "z_volume_periods_available": vol_n_points,
         "mtd": mtd,
         "delta_hhi": delta_hhi,
+        "delta_ocs": delta_ocs,
         "peer_unit_values": peers,
     }
 
@@ -404,8 +469,10 @@ def get_corridor_hazard(
                 "origin_m49": origin_m49,
                 "his": c.get("his", 0),
                 "hdi": c.get("hdi", 0),
+                "dgi": c.get("dgi"),
                 "notification_count": c.get("notification_count", 0),
                 "severity_total": c.get("severity_total", 0),
+                "hazard_breakdown": c.get("hazard_breakdown", {}),
             }
 
     return {"error": "Corridor not found"}
