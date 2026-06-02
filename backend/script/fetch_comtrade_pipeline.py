@@ -712,6 +712,16 @@ def fetch_feed_trade(reporter: str, partner: str, years: list[str]):
 # ─────────────────────────────────────────────
 
 def main():
+    # Line-buffer stdout/stderr so progress and the 403-quota message reach the
+    # user immediately when output is redirected (e.g. nohup, tee, background
+    # tasks). Without this, Python block-buffers stdout to a pipe and the run
+    # appears silent until termination.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except AttributeError:
+        pass
+
     parser = argparse.ArgumentParser(
         description="Fetch UN Comtrade bilateral trade data",
         formatter_class=argparse.RawDescriptionHelpFormatter,

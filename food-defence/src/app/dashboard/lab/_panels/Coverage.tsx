@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { CoverageReport } from "@/lib/types";
-import { fmt, fmtInt } from "@/lib/utils";
+import { fmtInt } from "@/lib/utils";
 
 function Pct({ num, den }: { num: number; den: number }) {
   if (den <= 0) return <span className="text-slate-400">—</span>;

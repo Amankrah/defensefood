@@ -1,0 +1,34 @@
+hs_code,fbs_item_code,fbs_item,note
+030617,S2765,Crustaceans,RASFF shrimps -> FBS crustaceans aggregate
+030711,S2767,"Molluscs, Other",Live oysters -> molluscs
+030712,S2767,"Molluscs, Other",Frozen/preserved oysters -> molluscs
+030721,S2767,"Molluscs, Other",Live scallops -> molluscs
+030729,S2767,"Molluscs, Other",Frozen scallops -> molluscs
+030731,S2767,"Molluscs, Other",Live mussels -> molluscs
+030732,S2767,"Molluscs, Other",Frozen/preserved mussels -> molluscs
+030739,S2767,"Molluscs, Other",Other mollusks -> molluscs
+030771,S2767,"Molluscs, Other",Live clams -> molluscs
+030772,S2767,"Molluscs, Other",Frozen/preserved clams -> molluscs
+030779,S2767,"Molluscs, Other",Other aquatic invertebrates -> molluscs (closest proxy)
+100190,S2511,Wheat and products,Wheat other -> wheat aggregate
+100590,S2514,Maize and products,Maize other -> maize aggregate
+1006,S2807,Rice and products,Rice header -> rice aggregate
+100610,S2807,Rice and products,Rice in husk -> rice aggregate
+100620,S2807,Rice and products,Husked rice -> rice aggregate
+100630,S2807,Rice and products,Milled rice -> rice aggregate
+100829,S2517,Millet and products,RASFF "Dried millet" -> millet aggregate
+110100,S2511,Wheat and products,Wheat flour -> wheat (primary commodity)
+110210,S2515,Rye and products,Rye flour -> rye
+110220,S2514,Maize and products,Maize flour -> maize
+110290,S2520,"Cereals, other",Other cereal flours (heterogeneous) -> Cereals other
+110313,S2514,Maize and products,Maize groats -> maize
+110412,S2516,Oats,Oat flakes -> oats
+110429,S2520,"Cereals, other",Other processed cereals -> Cereals other
+120740,S2561,Sesame seed,Sesame seeds -> sesame
+160553,S2767,"Molluscs, Other",Prepared mussels -> molluscs
+160556,S2767,"Molluscs, Other",Prepared clams -> molluscs
+190240,S2511,Wheat and products,Couscous (wheat semolina) -> wheat
+190430,S2511,Wheat and products,Bulgur (cracked wheat) -> wheat
+1905,S2511,Wheat and products,Bakery header -> wheat (primary commodity)
+190530,S2511,Wheat and products,Sweet biscuits -> wheat
+190590,S2511,Wheat and products,Other bakery -> wheat

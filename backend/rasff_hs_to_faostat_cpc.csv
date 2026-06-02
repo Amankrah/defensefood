@@ -1,0 +1,38 @@
+hs_code,faostat_cpc,faostat_item_code,faostat_item,note
+100190,'0111,15,Wheat,RASFF "Wheat" (other than durum) -> FAOSTAT Wheat aggregate
+100590,'0112,56,Maize (corn),RASFF "Corn" -> FAOSTAT Maize aggregate
+1006,'0113,27,Rice,RASFF 4-digit Rice header -> FAOSTAT Rice
+100610,'0113,27,Rice,RASFF rice in the husk -> FAOSTAT Rice aggregate
+100620,'0113,27,Rice,RASFF husked rice -> FAOSTAT Rice aggregate
+100630,'0113,27,Rice,RASFF milled rice -> FAOSTAT Rice aggregate
+100829,'0118,79,Millet,RASFF "Dried millet" -> FAOSTAT Millet
+110100,'0111,15,Wheat,RASFF "Wheat flour" -> Wheat as primary commodity proxy
+110210,'0116,71,Rye,RASFF "Rye flour" -> FAOSTAT Rye
+110220,'0112,56,Maize (corn),RASFF "Maize flour" -> FAOSTAT Maize
+110290,'F1717,1717,Cereals; primary,Heterogeneous "other cereal flours" -> FAOSTAT cereal aggregate
+110313,'0112,56,Maize (corn),RASFF "Corn grits" -> FAOSTAT Maize
+110412,'0117,75,Oats,RASFF "Oat flakes" -> FAOSTAT Oats
+110429,'F1717,1717,Cereals; primary,Heterogeneous "cereal grains processed" -> FAOSTAT cereal aggregate
+120740,'01444,289,Sesame seed,RASFF "Sesame seeds" -> FAOSTAT Sesame seed
+190240,'0111,15,Wheat,RASFF "Couscous" (wheat semolina product) -> Wheat
+190430,'0111,15,Wheat,RASFF "Bulgur" (cracked wheat) -> Wheat
+1905,'0111,15,Wheat,RASFF 4-digit Bakery header -> Wheat as primary commodity
+190530,'0111,15,Wheat,RASFF "Sweet biscuits" -> Wheat (predominantly wheat-based)
+190590,'0111,15,Wheat,RASFF "Other bakery" -> Wheat (predominantly wheat-based)
+030617,'04240,4240,Crustaceans,RASFF shrimps -> FishStat/QCL crustaceans CPC
+030711,'04310,4310,Oysters,Live oysters
+030712,'04310,4310,Oysters,Frozen/preserved oysters
+030721,'04390,4390,"Molluscs, other",Scallops -> other molluscs CPC (FishStat ISSCAAP)
+030729,'04390,4390,"Molluscs, other",Frozen scallops
+030731,'04330,4330,Mussels,Live mussels
+030732,'04330,4330,Mussels,Frozen/preserved mussels
+030739,'04390,4390,"Molluscs, other",Other mollusks
+030741,'04340,4340,"Squid, cuttlefish",Live/fresh squid
+030743,'04340,4340,"Squid, cuttlefish",Frozen squid
+030751,'04350,4350,Octopus,Live octopus
+030752,'04350,4350,Octopus,Frozen octopus
+030771,'04360,4360,"Clams, cockles",Live clams
+030772,'04360,4360,"Clams, cockles",Frozen/preserved clams
+030779,'04390,4390,"Molluscs, other",Other aquatic invertebrates
+160553,'04330,4330,Mussels,Prepared mussels
+160556,'04360,4360,"Clams, cockles",Prepared clams

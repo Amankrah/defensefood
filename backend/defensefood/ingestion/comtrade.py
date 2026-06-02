@@ -5,12 +5,15 @@ Refactored from backend/script/comtrade_fetcher.py.
 Fetches bilateral trade data for commodity-country pairs.
 """
 
+import logging
 import time
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import requests
+
+logger = logging.getLogger(__name__)
 
 from defensefood.ingestion.comtrade_keys import (
     QuotaExhausted,
@@ -133,39 +136,65 @@ def _newest(paths: list[Path]) -> Optional[Path]:
     return max(paths, key=lambda p: p.stat().st_mtime) if paths else None
 
 
-def load_merged_trade_data(path: Optional[Path] = None) -> pd.DataFrame:
-    """Load the trade CSV used for dependency / trade-flow metrics.
+_TRADE_NATURAL_KEY = ["period", "reporterCode", "partnerCode", "cmdCode", "flowCode"]
+
+
+def _pick_trade_source(path: Optional[Path] = None) -> tuple[pd.DataFrame, Path]:
+    """Resolve the trade CSV by precedence and return (df, source_path).
 
     Preference order (newest within each tier):
       1. explicit ``path`` if given
       2. ``merged_trade_data.csv`` (canonical, from ``script/merge_output_csv.py``)
       3. ``comtrade_all_partners_*.csv`` (full partner breakdown -> correct OCS/HHI)
       4. ``rasff_trade_all_pairs_*.csv`` (curated RASFF pairs -- biased OCS/HHI)
-
-    The all-partners file is preferred over the curated pairs because it gives
-    each reporter's complete import-partner set, which the Section 2 OCS/HHI
-    denominators require. Note: do NOT merge both tiers into one file (e.g. via
-    merge_output_csv.py) or partner rows will double-count.
     """
     if path is not None:
         if not path.exists():
             raise FileNotFoundError(f"Merged trade CSV not found: {path}")
-        return pd.read_csv(path)
+        return pd.read_csv(path), path
 
     out = _output_dir()
     merged = out / "merged_trade_data.csv"
     if merged.exists():
-        return pd.read_csv(merged)
+        return pd.read_csv(merged), merged
 
     all_partners = _newest(list(out.glob("comtrade_all_partners_*.csv")))
     if all_partners is not None:
-        return pd.read_csv(all_partners)
+        return pd.read_csv(all_partners), all_partners
 
     all_pairs = _newest(list(out.glob("rasff_trade_all_pairs_*.csv")))
     if all_pairs is not None:
-        return pd.read_csv(all_pairs)
+        return pd.read_csv(all_pairs), all_pairs
 
     raise FileNotFoundError(
         f"No trade CSV in {out} (looked for merged_trade_data.csv, "
         "comtrade_all_partners_*.csv, rasff_trade_all_pairs_*.csv)"
     )
+
+
+def load_merged_trade_data(path: Optional[Path] = None) -> pd.DataFrame:
+    """Load the trade CSV used for dependency / trade-flow metrics.
+
+    The all-partners file is preferred over the curated pairs because it gives
+    each reporter's complete import-partner set, which the Section 2 OCS/HHI
+    denominators require. Note: do NOT merge both tiers into one file (e.g. via
+    merge_output_csv.py) or partner rows will double-count.
+
+    Duplicate rows on the natural key (period, reporterCode, partnerCode,
+    cmdCode, flowCode) are dropped at load time. The fetcher writes in append
+    mode and may produce duplicates across runs/resumes; absorbing them here
+    keeps the trade-flow and dependency aggregators correct without changing
+    the fetcher.
+    """
+    df, source = _pick_trade_source(path)
+    have_key = [c for c in _TRADE_NATURAL_KEY if c in df.columns]
+    if len(have_key) == len(_TRADE_NATURAL_KEY):
+        before = len(df)
+        df = df.drop_duplicates(subset=_TRADE_NATURAL_KEY, keep="first")
+        dropped = before - len(df)
+        if dropped:
+            logger.info(
+                "load_merged_trade_data(%s): dropped %d duplicate rows on the natural key",
+                source.name, dropped,
+            )
+    return df

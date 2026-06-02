@@ -14,7 +14,7 @@ def test_empty_dir_returns_unavailable(tmp_path):
 def _write_bulk(tmp_path):
     prod = pd.DataFrame({
         "Area Code (M49)": ["'056", "'620"],
-        "Item Code (CPC)": ["'04330", "'01123"],
+        "Item Code (CPC)": ["'04330", "'0113"],
         "Element": ["Production", "Production"],
         "Year": [2022, 2022],
         "Unit": ["t", "t"],
@@ -54,3 +54,34 @@ def test_missing_columns_does_not_crash(tmp_path):
     store = load_faostat_store(tmp_path)
     # File is unusable but loader must not raise; store stays empty/unavailable.
     assert store.production == {}
+
+
+def _write_fishstat(tmp_path):
+    species = pd.DataFrame({
+        "3A_Code": ["MUS", "PNA"],
+        "ISSCAAP_Group_En": ["Mussels", "Shrimps, prawns"],
+        "Name_En": ["Blue mussel", "Whiteleg shrimp"],
+        "Major_Group": ["MOLLUSCA", "CRUSTACEA"],
+    })
+    species.to_csv(tmp_path / "CL_FI_SPECIES_GROUPS.csv", index=False)
+    prod = pd.DataFrame({
+        "COUNTRY.UN_CODE": [56, 56, 528],
+        "SPECIES.ALPHA_3_CODE": ["MUS", "MUS", "MUS"],
+        "AREA.CODE": ["04", "05", "04"],
+        "PRODUCTION_SOURCE_DET.CODE": ["CAPTURE", "AQUACULTURE", "AQUACULTURE"],
+        "MEASURE": ["Q_tlw", "Q_tlw", "Q_tlw"],
+        "PERIOD": [2022, 2022, 2022],
+        "VALUE": [100.0, 50.0, 200.0],
+        "STATUS": ["A", "A", "A"],
+    })
+    prod.to_csv(tmp_path / "Global_production_quantity.csv", index=False)
+
+
+def test_fishstat_production(tmp_path):
+    _write_fishstat(tmp_path)
+    store = load_faostat_store(tmp_path)
+    assert store.available is True
+    # Belgium: 100+50 capture+aqua, areas summed -> 150 t -> 150_000 kg
+    assert store.production_kg("030731", 56, 2022) == 150_000.0
+    # Netherlands: 200 t
+    assert store.production_kg("030731", 528, 2022) == 200_000.0
