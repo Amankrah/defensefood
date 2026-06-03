@@ -330,6 +330,29 @@ if ! command -v node &> /dev/null || ! node --version | grep -q "v20"; then
 fi
 print_status "Node.js $(node --version)"
 
+print_step "2.4 Python version check (PyO3 compatibility)"
+# PyO3 0.23 supports up to Python 3.13. Ubuntu 26.04+ ships 3.14 by default,
+# which PyO3 rejects at build time. If the system Python is too new, install
+# Python 3.13 via uv (a portable, no-PPA, no-root option) and reuse it for
+# the backend venv in Phase 3.
+PYTHON_BIN="python3"
+SYS_PY_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo "0")
+if [ "$SYS_PY_MINOR" -gt 13 ]; then
+    print_warning "System Python is 3.${SYS_PY_MINOR}; PyO3 0.23 caps at 3.13"
+    print_warning "Installing Python 3.13 via uv (user-space, no PPA needed)"
+    if ! command -v uv &> /dev/null; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        # shellcheck disable=SC1091
+        source "$HOME/.local/bin/env"
+    fi
+    uv python install 3.13
+    PYTHON_BIN="$(uv python find 3.13)"
+    print_status "Using $PYTHON_BIN for the backend venv"
+else
+    print_status "System Python 3.${SYS_PY_MINOR} is within PyO3 0.23's supported range"
+fi
+export PYTHON_BIN
+
 # =============================================================================
 # PHASE 3: APPLICATION DEPLOYMENT
 # =============================================================================
@@ -387,13 +410,20 @@ fi
 
 print_step "3.3 Setting up Python virtual environment"
 cd "$BACKEND_DIR"
+# Use the resolved interpreter from Phase 2.4 (system python3 by default, or
+# uv-managed 3.13 when the system is too new for PyO3).
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 if [ ! -d "$VENV_DIR" ]; then
-    python3 -m venv "$VENV_DIR"
+    if command -v uv &> /dev/null && [[ "$PYTHON_BIN" != "python3" ]]; then
+        uv venv --python "$PYTHON_BIN" "$VENV_DIR"
+    else
+        "$PYTHON_BIN" -m venv "$VENV_DIR"
+    fi
 fi
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
 pip install --upgrade pip wheel
-print_status "venv ready at $VENV_DIR"
+print_status "venv ready at $VENV_DIR (python $(python --version 2>&1 | awk '{print $2}'))"
 
 print_step "3.4 Building Rust extension via maturin"
 # maturin develop installs the compiled cdylib into the active venv as
