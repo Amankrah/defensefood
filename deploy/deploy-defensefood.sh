@@ -415,7 +415,10 @@ cd "$BACKEND_DIR"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 if [ ! -d "$VENV_DIR" ]; then
     if command -v uv &> /dev/null && [[ "$PYTHON_BIN" != "python3" ]]; then
-        uv venv --python "$PYTHON_BIN" "$VENV_DIR"
+        # --seed installs pip + setuptools + wheel into the venv. Without it,
+        # `pip install` later falls through to the system Python 3.14 pip,
+        # which on Ubuntu 26.04 refuses with PEP 668 externally-managed.
+        uv venv --seed --python "$PYTHON_BIN" "$VENV_DIR"
     else
         "$PYTHON_BIN" -m venv "$VENV_DIR"
     fi
