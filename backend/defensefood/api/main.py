@@ -41,16 +41,46 @@ from defensefood.pipeline.scoring_pipeline import run_scoring_pipeline
 
 
 def _cors_allow_origins() -> list[str]:
-    """Origins allowed for browser clients (comma-separated env or dev defaults)."""
-    raw = os.environ.get("DEFENSEFOOD_CORS_ORIGINS", "").strip()
-    if raw:
-        return [o.strip() for o in raw.split(",") if o.strip()]
-    return [
+    """Origins allowed for browser clients.
+
+    Returns the union of:
+      * production origins from ``DEFENSEFOOD_CORS_ORIGINS`` (comma-separated),
+      * localhost dev origins ``http://(localhost|127.0.0.1):(3000|3001|5000)``,
+
+    so the same deployed API serves the production frontend AND a developer's
+    local Next.js dev server (handy for debugging prod data without redeploying).
+    Localhost in production CORS is safe because browsers set the ``Origin``
+    header from the page's own URL; an attacker site cannot forge it.
+
+    Set ``DEFENSEFOOD_CORS_ALLOW_LOCALHOST=false`` to lock the API down to
+    the env-configured origins only.
+    """
+    dev_defaults = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
         "http://localhost:5000",
         "http://127.0.0.1:5000",
     ]
+
+    raw = os.environ.get("DEFENSEFOOD_CORS_ORIGINS", "").strip()
+    env_origins = [o.strip() for o in raw.split(",") if o.strip()] if raw else []
+
+    allow_localhost = os.environ.get("DEFENSEFOOD_CORS_ALLOW_LOCALHOST", "true").lower() != "false"
+
+    candidates = env_origins + (dev_defaults if allow_localhost else [])
+    if not candidates:
+        candidates = dev_defaults
+
+    # Dedupe while preserving order so env-configured origins keep priority.
+    seen: set[str] = set()
+    out: list[str] = []
+    for o in candidates:
+        if o not in seen:
+            seen.add(o)
+            out.append(o)
+    return out
 from defensefood.api.routers import (
     commodities,
     corridors,

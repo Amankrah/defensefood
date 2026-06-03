@@ -400,6 +400,13 @@ cat > "$BACKEND_DIR/.env" << EOF
 DEFENSEFOOD_CORS_ORIGINS=https://${DOMAIN},https://www.${DOMAIN}
 DEFENSEFOOD_FAOSTAT_DIR=${BACKEND_DIR}/data/faostat
 
+# CORS: by default localhost:3000 / 3001 / 5000 are ALSO allowed so a
+# developer's local Next.js can hit this production API for debugging.
+# Browsers set the Origin header from the page URL (it cannot be forged
+# by a remote site), so allowing localhost in production is safe. To lock
+# the API down to the env-configured origins only, set this to "false":
+# DEFENSEFOOD_CORS_ALLOW_LOCALHOST=false
+
 # Optional — only needed if running the Comtrade fetcher on this server
 # (the API itself does not need these to serve cached data):
 # COMTRADE_SUBSCRIPTION_KEYS=key1,key2
