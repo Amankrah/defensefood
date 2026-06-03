@@ -17,7 +17,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { api } from "@/lib/api";
-import type { NetworkGraph } from "@/lib/types";
+import type { MarketPresence, NetworkGraph } from "@/lib/types";
 import { fmt, riskHex } from "@/lib/utils";
 
 type CountryNodeData = {
@@ -28,7 +28,12 @@ type CountryNodeData = {
   totalHis: number;
 };
 
-type FlowEdgeData = { his: number; relHis: number; corridorCount: number };
+type FlowEdgeData = {
+  his: number;
+  relHis: number;
+  corridorCount: number;
+  presence: MarketPresence;
+};
 
 const nodeTypes = { country: CountryNode };
 
@@ -122,34 +127,55 @@ function buildFlowNodes(graph: NetworkGraph): Node[] {
   return out;
 }
 
+/** Dominant role for an aggregated edge: confirmed > detected > informational > unknown. */
+function pickDominantPresence(roles: MarketPresence[]): MarketPresence {
+  if (roles.some((r) => r === "confirmed")) return "confirmed";
+  if (roles.some((r) => r === "detected")) return "detected";
+  if (roles.some((r) => r === "informational")) return "informational";
+  return "unknown";
+}
+
 function buildFlowEdges(
   graph: NetworkGraph,
   priorityPairs: Set<string>
 ): Edge<FlowEdgeData>[] {
   const maxHis = Math.max(...graph.edges.map((e) => e.his), 0.001);
 
-  const edgeMap = new Map<string, { his: number; count: number }>();
+  const edgeMap = new Map<string, { his: number; count: number; roles: MarketPresence[] }>();
   for (const e of graph.edges) {
     const key = `${e.origin_m49}-${e.destination_m49}`;
     const existing = edgeMap.get(key);
+    const presence = (e.market_presence ?? "unknown") as MarketPresence;
     if (existing) {
       existing.his += e.his;
       existing.count += 1;
+      existing.roles.push(presence);
     } else {
-      edgeMap.set(key, { his: e.his, count: 1 });
+      edgeMap.set(key, { his: e.his, count: 1, roles: [presence] });
     }
   }
 
-  return Array.from(edgeMap.entries()).map(([key, { his, count }]) => {
+  return Array.from(edgeMap.entries()).map(([key, { his, count, roles }]) => {
     const [source, target] = key.split("-");
     const thickness = Math.max(1, Math.min(5, (his / maxHis) * 4 + 1));
     const relHis = his / maxHis;
     const isPriority = priorityPairs.has(key);
+    const presence = pickDominantPresence(roles);
+    // Edge stroke: confirmed keeps the HIS risk gradient; detected uses a
+    // muted sky-blue; informational is slate-300 dashed (per EU SOPs the
+    // product is not on this market, so it's diagnostic only).
+    const presenceStroke =
+      presence === "detected"
+        ? "#38bdf8"
+        : presence === "informational"
+        ? "#cbd5e1"
+        : null;
+    const presenceDash = presence === "informational" ? "4 3" : "0";
     return {
       id: key,
       source,
       target,
-      data: { his, relHis, corridorCount: count },
+      data: { his, relHis, corridorCount: count, presence },
       style: isPriority
         ? {
             stroke: "#4f46e5",
@@ -158,11 +184,13 @@ function buildFlowEdges(
             strokeDasharray: "0",
           }
         : {
-            stroke: riskHex(his, maxHis),
+            stroke: presenceStroke ?? riskHex(his, maxHis),
             strokeWidth: thickness,
-            opacity: 0.12 + relHis * 0.88,
+            opacity:
+              presence === "informational" ? 0.45 : 0.12 + relHis * 0.88,
+            strokeDasharray: presenceDash,
           },
-      animated: isPriority || relHis > 0.5,
+      animated: isPriority || (presence === "confirmed" && relHis > 0.5),
       interactionWidth: 16,
     };
   });
@@ -338,6 +366,24 @@ export default function ExposureNetworkPage() {
           <span className="flex items-center gap-1.5">
             <span className="h-0.5 w-5 bg-indigo-600" />
             Indigo link: in this period&apos;s top-priority queue
+          </span>
+        </div>
+        <p className="mt-1 font-medium text-slate-700">Market presence</p>
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          <span className="flex items-center gap-1.5" title="Per RASFF: product is or may be on this market (distribution / follow-up)">
+            <span className="h-0.5 w-5 bg-rose-500" />
+            Confirmed (drives ACEP/ORPS)
+          </span>
+          <span className="flex items-center gap-1.5" title="Notifier-only — country detected the hazard">
+            <span className="h-0.5 w-5 bg-sky-400" />
+            Detected (notifier-only)
+          </span>
+          <span className="flex items-center gap-1.5" title="Attention-only — RASFF: product not on this market">
+            <span
+              className="inline-block h-0.5 w-5"
+              style={{ borderTop: "2px dashed #cbd5e1" }}
+            />
+            Informational (excluded from ACEP)
           </span>
         </div>
       </div>

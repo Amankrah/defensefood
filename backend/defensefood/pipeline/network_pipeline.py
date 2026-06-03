@@ -53,6 +53,71 @@ def build_exposure_network(
     return net
 
 
+def estimate_avg_shipment_size_by_hs_chapter(
+    trade_df: pd.DataFrame,
+    *,
+    min_rows: int = 30,
+) -> dict[str, float]:
+    """Estimate average shipment size m̄(c) per HS-2 chapter (kg).
+
+    Blueprint §6.4 Eq. (35) needs m̄(c) to convert total bilateral imports
+    into an estimated shipment count. At HS-6 specificity the trade table
+    doesn't have enough rows for a stable median; HS-2 chapter is the
+    documented fallback.
+
+    Each row in ``trade_df`` is treated as one shipment (Comtrade typically
+    publishes one row per reporter/partner/HS/period). The median ``netWgt``
+    over rows in a chapter is the estimator. Chapters with fewer than
+    ``min_rows`` observations fall back to the global median.
+
+    Returns a dict ``{"01": median_kg, ..., "global": median_kg}``. The
+    ``"global"`` key is always present and used by the caller when a
+    commodity's HS-2 chapter isn't in the lookup.
+    """
+    out: dict[str, float] = {}
+    if trade_df is None or trade_df.empty or "netWgt" not in trade_df.columns:
+        out["global"] = 0.0
+        return out
+
+    # Use only positive net weights (Comtrade publishes 0 / NaN for some rows).
+    nw = trade_df["netWgt"]
+    valid = trade_df.loc[nw.notna() & (nw > 0)].copy()
+    if valid.empty:
+        out["global"] = 0.0
+        return out
+
+    out["global"] = float(valid["netWgt"].median())
+
+    if "cmdCode" not in valid.columns:
+        return out
+
+    valid["_hs2"] = valid["cmdCode"].astype(str).str.zfill(6).str[:2]
+    grouped = valid.groupby("_hs2")["netWgt"]
+    counts = grouped.size()
+    medians = grouped.median()
+    for chapter, n in counts.items():
+        if n >= min_rows:
+            out[str(chapter)] = float(medians.loc[chapter])
+    return out
+
+
+def lookup_avg_shipment_size(
+    avg_lookup: dict[str, float],
+    commodity_hs: str,
+) -> float:
+    """Resolve m̄(c) for a specific HS code using the chapter lookup.
+
+    Falls back to ``avg_lookup["global"]`` when the HS-2 chapter isn't
+    populated (rare chapters). Returns 0.0 if the lookup is empty.
+    """
+    if not avg_lookup:
+        return 0.0
+    if not commodity_hs:
+        return float(avg_lookup.get("global", 0.0))
+    chapter = str(commodity_hs).zfill(6)[:2]
+    return float(avg_lookup.get(chapter) or avg_lookup.get("global", 0.0))
+
+
 def count_missing_bdi_edges(
     corridors_with_metrics: list[dict],
     *,

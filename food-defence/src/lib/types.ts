@@ -209,6 +209,8 @@ export interface GraphEdge {
   severity_total: number;
   /** Bilateral Dependency Index (Section 2); null for corridors without trade. */
   bdi?: number | null;
+  /** RASFF market-presence classification of this lane. */
+  market_presence?: MarketPresence;
 }
 
 export interface NetworkGraph {
@@ -265,7 +267,10 @@ export interface CountryOrpsByCommodity {
   pcc_proxy: boolean;
   commodities: {
     commodity_hs: string;
+    /** ORPS over confirmed destinations only (default). */
     orps: number;
+    /** Role-split ORPS buckets for this commodity. */
+    orps_by_role?: Record<MarketPresence, number>;
     /** Destinations whose PCC came from FAOSTAT (real consumption). */
     pcc_real_count?: number;
     /** Destinations that fell back to PCC=1.0 (no consumption data). */

@@ -20,28 +20,168 @@
 | **API** | Where the value appears in the REST surface |
 | **Status** | `Live` = populated in normal runs; `Partial` / `Planned` = caveats below |
 
-**Corridor key everywhere:** $(c, i, j)$ = commodity HS $c$, destination (reporter) country $i$, origin (partner) country $j$, annual trade year $t$ for Comtrade/FAOSTAT; RASFF alert time uses month index $t_r$ as YYYYMM.
+Every equation below uses the symbols in this glossary. Subscripts $(c,i,j,t)$ are omitted in prose when the meaning is clear.
 
-**Notation (blueprint §1):**
+---
 
-- $M(c,i,j,t)$ — bilateral imports (kg), Comtrade flow **M**, reporter = $i$, partner = $j$
-- $M(c,i,\cdot,t)$ — total imports of $c$ into $i$
-- $X(c,i,\cdot,t)$ — total exports of $c$ from $i$
-- $P(c,i,t)$, $D(c,i,t)$ — production and domestic food-use supply (kg), FAOSTAT
-- $R(c,i,j,t)$ — RASFF notification counts touching corridor $(c,i,j)$
+## Symbols and abbreviations
+
+### Subscripts and indices
+
+| Symbol | Meaning |
+|--------|---------|
+| $c$ | **Commodity** — HS code on the lane (RASFF `hs_code`, Comtrade `cmdCode`) |
+| $i$ | **Destination country** — importing / “attention” market (Comtrade **reporter**; RASFF affected country) |
+| $j$ | **Origin country** — exporting / RASFF **origin** (Comtrade **partner**) |
+| $t$ | **Trade / supply year** — annual Comtrade `period` and FAOSTAT year used for §2–§3 |
+| $t_r$ | **Notification month** — RASFF alert date as YYYYMM (used in HIS decay) |
+| $r$ | A single **RASFF notification** (one row in the alert database) |
+| $h$ | **Hazard type** — one of six taxonomy families in $\mathcal{H}$ |
+| $\cdot$ | **Sum over all partners** — e.g. $M(c,i,\cdot,t) = \sum_j M(c,i,j,t)$ |
+| $\mathcal{O}$ | Set of **import partner** countries for destination $i$ |
+| $\mathcal{N}$ | Set of **destination** countries in scope (EU members in ORPS sums) |
+| $\mathcal{H}$ | Set of **six hazard families** (biological, pesticides, heavy metals, mycotoxins, other chemical, regulatory) |
+| $\mathcal{R}(c,i,j)$ | Set of RASFF notifications that touch corridor $(c,i,j)$ |
+
+**Corridor:** the lane $(c, i, j)$ — one commodity, one destination, one origin. The API stores one metric record per corridor (plus RASFF role metadata).
+
+---
+
+### Raw data variables (inputs)
+
+#### UN Comtrade (trade flows)
+
+| Symbol | What it is | Units / field |
+|--------|------------|---------------|
+| $M(c,i,j,t)$ | **Bilateral import quantity** — what country $i$ reports importing commodity $c$ from origin $j$ in year $t$ | kg (`netWgt`), flow **M** (imports) |
+| $M(c,i,\cdot,t)$ | **Total imports** of $c$ into $i$ from all origins in year $t$ | kg — sum over partners |
+| $X(c,i,\cdot,t)$ | **Total exports** of $c$ from country $i$ in year $t$ | kg, flow **X** (exports) |
+| $X_j(c,j,i,t)$ | **Mirror export** — what origin $j$ reports exporting to destination $i$ (used in MTD) | kg |
+| $V(c,i,j,t)$ | **Bilateral import value** — USD value of the same flow as $M$ | USD (`primaryValue`) |
+| $UV(c,i,j,t)$ | **Unit value** — price proxy $V / M$ | USD/kg |
+
+#### FAOSTAT / FishStat (production and consumption)
+
+| Symbol | What it is | Units / source |
+|--------|------------|---------------|
+| $P(c,i,t)$ | **Domestic production** of commodity $c$ in country $i$ | kg — QCL / FishStat (seafood) |
+| $D(c,i,t)$ | **Domestic supply for food use** (apparent consumption quantity) | kg — Food Balance Sheets |
+| $\Delta S(c,i,t)$ | **Stock change** — draw-down positive, build-up negative | kg — FBS when available; else 0 |
+| $Pop(i,t)$ | **Population** of country $i$ | persons — for PCC |
+
+#### RASFF Window (hazard alerts)
+
+| Symbol | What it is | How built in the system |
+|--------|------------|-------------------------|
+| $R(c,i,j,t)$ | **Notification count** for corridor $(c,i,j)$ in period $t$ | Count of alerts with matching HS, origin $j$, and $i$ in affected countries |
+| $R(c,i,\cdot,t)$ | **Total notifications** for commodity $c$ and destination $i$ (all origins) | Denominator for notification share in DGI |
+| $S(r)$ | **Severity weight** of notification $r$ | $W_{\mathrm{class}} \times W_{\mathrm{risk}}$ (Eq 14) |
+| $W_{\mathrm{class}}(r)$ | **Classification weight** — alert vs border rejection vs information | See Eq (14) table |
+| $W_{\mathrm{risk}}(r)$ | **Risk-decision weight** — serious vs not serious | See Eq (14) table |
+| $\alpha$ | **Temporal decay** for HIS — default **0.90** | Older alerts count less |
+
+---
+
+### §2 — Dependency metrics (symbols and API names)
+
+| Symbol | Name (abbr.) | What it measures |
+|--------|--------------|------------------|
+| $DS(c,i,t)$ | Domestic supply | Full balance sheet including $\Delta S$ when available |
+| $DS'(c,i,t)$ | Apparent domestic supply (**DS′**) | $P + M - X$ (+ $\Delta S$ when in Eq 1 path); API: `ds_prime` |
+| $IDR(c,i,t)$ | Import dependency ratio | Share of supply met by imports: $M_{\cdot} / DS'$; API: `idr` |
+| $OCS(c,i,j,t)$ | Origin country share | Origin $j$’s share of total imports: $M_{ij} / M_{\cdot}$; API: `ocs` |
+| $BDI(c,i,j,t)$ | Bilateral dependency index | Origin $j$’s share of **domestic supply**: $M_{ij} / DS'$; API: `bdi` |
+| $HHI(c,i,t)$ | Herfindahl–Hirschman index | Concentration of import partners: $\sum_j OCS_{ij}^2$; API: `hhi` |
+| $SSR(c,i,t)$ | Self-sufficiency ratio | $P / D$; API: `ssr` |
+| $SCI(c,i,j,t)$ | Supply criticality index | $IDR \times OCS \times (1 + HHI)$; API: `sci`, `sci_norm` |
+
+---
+
+### §3 — Consumption metrics
+
+| Symbol | Name (abbr.) | What it measures |
+|--------|--------------|------------------|
+| $PCC(c,i,t)$ | Per capita consumption | $D / Pop$ (kg/capita/year); API: `pcc` |
+| $CRS(c,i,t)$ | Consumption rank score | Rank of $c$ within country $i$ by PCC (0–1); API: `crs`, `crs_norm` |
+| $|C|$ | Commodity count | Number of commodities ranked in country $i$ for CRS |
+| $CV_D(c,i)$ | Coefficient of variation of PCC | Volatility of per-capita consumption over ~5 years |
+| $DIS(c,i)$ | Demand inelasticity score | $1 - \min(CV_D, 1)$; API: `dis` |
+
+---
+
+### §4 — Hazard metrics
+
+| Symbol | Name (abbr.) | What it measures |
+|--------|--------------|------------------|
+| $HIS(c,i,j,t)$ | Hazard intensity score | Severity-weighted, decayed sum of alerts; API: `his`, `his_norm` |
+| $HDI(c,i,j)$ | Hazard diversity index | Normalised entropy across hazard types; API: `hdi` |
+| $p_h$ | Hazard-type proportion | Share of lane alerts in category $h$ |
+| $DGI(c,i,j,t)$ | Detection gap indicator | Trade share minus notification share; API: `dgi` |
+
+---
+
+### §5 — Trade-flow anomaly metrics
+
+| Symbol | Name (abbr.) | What it measures |
+|--------|--------------|------------------|
+| $\mu_{UV}, \sigma_{UV}$ | Mean / std of unit values | Across all import partners to $i$ for $c$ |
+| $Z_{UV}(c,i,j,t)$ | Unit-value z-score | How unusual this origin’s price is vs peers; API: `z_uv` |
+| $\mu_M, \sigma_M$ | Rolling mean / std of volume | On corridor $(c,i,j)$ history (window $k$) |
+| $Z_M(c,i,j,t)$ | Volume anomaly z-score | Surge or collapse vs own history; API: `z_volume` |
+| $k$ | Rolling window length | Default **5** prior years |
+| $MTD(c,i,j,t)$ | Mirror trade discrepancy | Importer vs exporter report gap; API: `mtd` |
+| $\Delta HHI(c,i,t)$ | Change in HHI | Year-on-year concentration shift; API: `delta_hhi` |
+| $\Delta OCS(c,i,j,t)$ | Change in OCS | Year-on-year origin share shift; API: `delta_ocs` |
+
+---
+
+### §6 — Network aggregates
+
+| Symbol | Name (abbr.) | What it measures |
+|--------|--------------|------------------|
+| $w_{\mathrm{trade}}$ | Trade edge weight | Bilateral import kg on graph edge $j \to i$ |
+| $w_{\mathrm{hazard}}$ | Hazard edge weight | HIS on that edge |
+| $w_{\mathrm{dep}}$ | Dependency edge weight | BDI on that edge |
+| $ORPS(j,c,t)$ | Origin risk propagation score | Outbound hazard × dependency × PCC; API: `orps` |
+| $ACEP(i,t)$ | Attention country exposure profile | Inbound hazard × dependency × CRS; API: `acep` |
+| $\hat P(\mathrm{hazard}\mid c,i,j)$ | Empirical hazard probability | Alerts per estimated shipment (Eq 35; not in API yet) |
+
+---
+
+### §7 — Composite scoring
+
+| Symbol | Name (abbr.) | What it measures |
+|--------|--------------|------------------|
+| $x_{\mathrm{norm}}$ | Normalised score | Percentile (or min–max / log-percentile) rank in $[0,1]$ |
+| $CVS$ | Composite vulnerability score | Lane priority 0–1; API: `cvs` |
+| $w_h, w_p, w_{sc}$ | Amplifier weights | Hazard, **price anomaly (PAS)**, **supply-chain (SCCS)** — default 1 each |
+| $PAS_{\mathrm{norm}}$ | Price anomaly signal | Blueprint slot; **not populated** (treated as 0) |
+| $SCCS_{\mathrm{norm}}$ | Supply-chain complexity | Blueprint slot; **not populated** (treated as 0) |
+
+---
+
+### Greek letters and statistics (used in formulas)
+
+| Symbol | Meaning |
+|--------|---------|
+| $\alpha$ | Monthly decay base for HIS ($\alpha^{t - t_r}$) |
+| $\mu$ | Mean (e.g. $\mu_{UV}$, $\mu_M$ rolling mean) |
+| $\sigma$ | Standard deviation |
+| $\sigma_{PCC}$ | Std. dev. of per-capita consumption time series |
+| $\ln$ | Natural logarithm (HDI entropy, log-percentile norm) |
 
 ---
 
 ## §1 — Notation and primary variables (no scored equations)
 
-The blueprint’s §1 defines index sets and raw variables only. The running system materialises them as follows.
+Blueprint §1 is the index-set and raw-variable layer; the tables above are the operational definitions used in code. At startup the system loads:
 
-| Variable | Source | Role in pipeline |
-|----------|--------|------------------|
-| $M, X, V$ | UN Comtrade (annual, HS, all-partners preferred) | Section 2 denominators, Section 5 anomalies |
-| $P, D, \Delta S$ | FAOSTAT QCL + Food Balance Sheets (+ FishStat for seafood $P$) | Eq (1)–(2), §3 PCC/CRS/DIS |
-| RASFF rows | `updated_data_rasff_window.xlsx` | Defines which $(c,i,j)$ lanes exist; §4 hazard |
-| Country codes | UN M49 via name lookup | Join RASFF text names to Comtrade numeric codes |
+| Data | Role in pipeline |
+|------|------------------|
+| Comtrade merged CSV | $M$, $X$, $V$ → §2, §5, DGI |
+| FAOSTAT QCL + FBS (+ FishStat for seafood $P$) | $P$, $D$, $\Delta S$, $Pop$ → §2–§3 |
+| RASFF Excel | Defines corridors; $R$, $S(r)$ → §4 |
+| UN M49 name lookup | Joins RASFF country names to Comtrade numeric codes |
 
 **Why two “destinations”:** RASFF *affected countries* (notifier, distribution, follow-up, attention) define alert lanes. Comtrade *reporter* is the importing market for trade statistics. The system **joins on the same $(c,i,j)$ key** but does not prove a specific alert batch ended in country $i$; structural metrics describe aggregate bilateral trade, not lot traceability.
 

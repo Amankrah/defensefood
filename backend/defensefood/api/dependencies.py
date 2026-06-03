@@ -61,6 +61,9 @@ class AppState:
     pcc_lookup: dict[tuple[str, int], float] = field(default_factory=dict)
     crs_lookup: dict[tuple[str, int], float] = field(default_factory=dict)
     dis_lookup: dict[tuple[str, int], float] = field(default_factory=dict)
+    # Section 6.4 (Eq. 35): m̄(c) — average shipment size (kg) per HS-2 chapter.
+    # Built once from the trade DataFrame at startup; falls back to "global" key.
+    avg_shipment_lookup: dict[str, float] = field(default_factory=dict)
 
 
 _state: Optional[AppState] = None
@@ -86,6 +89,12 @@ def _load_data(state: AppState) -> None:
             "Run ingestion or place merged Comtrade output where load_merged_trade_data expects it."
         )
         state.trade_df = pd.DataFrame()
+
+    # Section 6.4 m̄(c) lookup — built once from the loaded trade table.
+    from defensefood.pipeline.network_pipeline import (
+        estimate_avg_shipment_size_by_hs_chapter,
+    )
+    state.avg_shipment_lookup = estimate_avg_shipment_size_by_hs_chapter(state.trade_df)
 
     # Load RASFF data and run hazard pipeline
     try:

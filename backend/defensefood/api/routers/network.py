@@ -61,6 +61,7 @@ def get_network_graph(
             "his": c.get("his", 0.0),
             "severity_total": c.get("severity_total", 0.0),
             "bdi": c.get("bdi"),
+            "market_presence": c.get("market_presence", "unknown"),
         })
 
     nodes = list(node_map.values())

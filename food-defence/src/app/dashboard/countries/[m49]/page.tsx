@@ -23,6 +23,7 @@ import type {
 import { fmt, riskColor, truncate } from "@/lib/utils";
 import MetricCard from "@/components/shared/MetricCard";
 import DataTable, { type Column } from "@/components/shared/DataTable";
+import { MarketPresenceBadge } from "@/components/shared/MarketPresenceBadge";
 import { interpretAcep } from "@/lib/interpret";
 
 const INBOUND_COLS: Column<CorridorMetric>[] = [
@@ -201,6 +202,32 @@ export default function CountrySnapshot() {
           subtext="Hazard intensity totalled across every inbound lane in the window."
         />
       </section>
+
+      {acep?.acep_by_role && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+            ACEP by RASFF market presence
+          </h2>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Per Pan et al. 2025 (Discover Food), role-aware directed networks
+            split exposure by what RASFF actually asserts about each
+            destination. The headline number above is the confirmed bucket.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-3">
+            {(["confirmed", "detected", "informational"] as const).map((role) => {
+              const v = acep.acep_by_role?.[role] ?? 0;
+              return (
+                <div key={role} className="min-w-[140px] flex-1">
+                  <MarketPresenceBadge presence={role} />
+                  <p className="mt-1 font-mono text-lg font-semibold text-slate-900">
+                    {fmt(v)}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {detail.corridors_as_origin > 0 && orpsChartData.length > 0 && (
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
