@@ -474,7 +474,7 @@ $$
 
 $$
 \begin{aligned}
-HDI(c,i,j) &= -\sum_{h \in \mathcal{H}} p_h \ln p_h \\[4pt]
+HDI(c,i,j) &= -\sum_{h \in \mathcal{H}} p_h \ln p_h \\
 HDI_{\mathrm{norm}}(c,i,j) &= \frac{HDI}{\ln |\mathcal{H}|},
   \quad |\mathcal{H}| = 6
 \end{aligned}
@@ -553,8 +553,8 @@ $$
 
 $$
 \begin{aligned}
-\mu_M(c,i,j) &= \frac{1}{k}\sum_{\tau=t-k}^{t-1} M(c,i,j,\tau) \\[4pt]
-\sigma_M(c,i,j) &= \text{std of the same window} \\[4pt]
+\mu_M(c,i,j) &= \frac{1}{k}\sum_{\tau=t-k}^{t-1} M(c,i,j,\tau) \\
+\sigma_M(c,i,j) &= \text{std of the same window} \\
 Z_M(c,i,j,t) &= \frac{M(c,i,j,t) - \mu_M}{\sigma_M}
 \end{aligned}
 $$
@@ -766,11 +766,11 @@ The implemented form masks inactive amplifier terms so the divisor and numerator
 
 $$
 \begin{aligned}
-\mathcal{A} &= \{\, k \in \{HIS, PAS, SCCS\} : x_{k,\mathrm{norm}} \neq \text{None}\,\} \\[4pt]
-CRS^{\star}_{\mathrm{norm}} &= \begin{cases} CRS_{\mathrm{norm}} & \text{if available} \\ 0.5 & \text{neutral fallback} \end{cases} \\[4pt]
-\text{base} &= SCI_{\mathrm{norm}} \cdot CRS^{\star}_{\mathrm{norm}} \\[4pt]
-\text{amp}  &= 1 + \sum_{k \in \mathcal{A}} w_k \cdot x_{k,\mathrm{norm}} \\[4pt]
-\text{max} &= 1 + \sum_{k \in \mathcal{A}} w_k \\[4pt]
+\mathcal{A} &= \{\, k \in \{HIS, PAS, SCCS\} : x_{k,\mathrm{norm}} \neq \text{None}\,\} \\
+CRS^{\star}_{\mathrm{norm}} &= \begin{cases} CRS_{\mathrm{norm}} & \text{if available} \\ 0.5 & \text{neutral fallback} \end{cases} \\
+\text{base} &= SCI_{\mathrm{norm}} \cdot CRS^{\star}_{\mathrm{norm}} \\
+\text{amp}  &= 1 + \sum_{k \in \mathcal{A}} w_k \cdot x_{k,\mathrm{norm}} \\
+\text{max} &= 1 + \sum_{k \in \mathcal{A}} w_k \\
 CVS &= \frac{\text{base} \cdot \text{amp}}{\text{max}} \in [0, 1]
 \end{aligned}
 $$
