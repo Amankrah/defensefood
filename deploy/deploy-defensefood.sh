@@ -57,9 +57,14 @@ GIT_BRANCH="${GIT_BRANCH:-main}"
 # falls below this.
 MEMORY_THRESHOLD_MB="${MEMORY_THRESHOLD_MB:-1500}"
 
-# Uvicorn workers — each loads the full state at startup, so memory scales
-# linearly. 2 is comfortable on t3.large; bump only on bigger instances.
-API_WORKERS="${API_WORKERS:-2}"
+# Uvicorn workers. Each worker independently loads the full state (corridor
+# metrics + pandas DataFrames + FAOSTAT lookups + scoring) at startup. That
+# work is CPU-heavy pandas, and t3.large only has 2 vCPUs, so two parallel
+# workers will saturate the box and starve each other on cold boot, often
+# without ever reaching "Application startup complete". One worker is the
+# safe default; bump only on instances with >= 4 vCPUs and confirmed
+# memory headroom (each worker is ~800MB to 1.2GB resident).
+API_WORKERS="${API_WORKERS:-1}"
 
 # =============================================================================
 # COLORS AND HELPERS
