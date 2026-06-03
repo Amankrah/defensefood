@@ -15,9 +15,13 @@ from __future__ import annotations
 
 import math
 
+import pandas as pd
+
 from defensefood.pipeline.network_pipeline import (
     build_exposure_network,
     count_missing_bdi_edges,
+    estimate_avg_shipment_size_by_hs_chapter,
+    lookup_avg_shipment_size,
 )
 
 
@@ -213,3 +217,115 @@ def test_orps_row_carries_pcc_split_counts():
         assert "pcc_proxy_count" in r
         assert r["pcc_real_count"] >= 0
         assert r["pcc_proxy_count"] >= 0
+
+
+# ── Slice C: Eq. 35 average shipment size + endpoint ──────────────────────
+
+
+def _trade_df_for_mbar(rows):
+    """rows: list of (cmdCode, netWgt). Other columns padded with sensible defaults."""
+    return pd.DataFrame(
+        [
+            {
+                "cmdCode": str(hs),
+                "netWgt": kg,
+                "period": 2023,
+                "reporterCode": 56,
+                "partnerCode": 250,
+                "flowCode": "M",
+            }
+            for hs, kg in rows
+        ]
+    )
+
+
+def test_avg_shipment_size_chapter_median_with_enough_rows():
+    """A chapter with ≥30 rows gets its own median; sparse chapters fall back."""
+    rows = []
+    # Chapter 10 (cereals): 40 rows around 25,000 kg → median ≈ 25,000.
+    for i in range(40):
+        rows.append(("100630", 24_500 + (i % 20) * 50))
+    # Chapter 03 (fish): only 5 rows → not enough for own median, must fall back.
+    for v in (1_000, 1_100, 1_200, 1_300, 1_400):
+        rows.append(("030749", v))
+    df = _trade_df_for_mbar(rows)
+    lookup = estimate_avg_shipment_size_by_hs_chapter(df, min_rows=30)
+    assert "global" in lookup
+    assert "10" in lookup
+    assert lookup["10"] > 0
+    # Sparse chapter excluded (lookup falls back to global on query).
+    assert "03" not in lookup
+
+
+def test_avg_shipment_size_handles_empty_trade_df():
+    df = pd.DataFrame(columns=["cmdCode", "netWgt", "period"])
+    lookup = estimate_avg_shipment_size_by_hs_chapter(df)
+    assert lookup == {"global": 0.0}
+
+
+def test_lookup_avg_shipment_size_falls_back_to_global():
+    lookup = {"10": 25000.0, "global": 8000.0}
+    # HS code in chapter 10 → chapter median.
+    assert lookup_avg_shipment_size(lookup, "100630") == 25000.0
+    # HS code in a chapter not in the lookup → global fallback.
+    assert lookup_avg_shipment_size(lookup, "070130") == 8000.0
+    # Missing/empty HS → global.
+    assert lookup_avg_shipment_size(lookup, "") == 8000.0
+
+
+def test_hazard_probability_endpoint_eligibility_gate():
+    """The endpoint enforces the ≥10-notification gate per blueprint Sec. 6.4."""
+    import defensefood.api.dependencies as deps_module
+    from defensefood.api.routers.corridors import get_corridor_hazard_probability
+
+    deps_module._state = None
+    state = deps_module.get_state()
+
+    # Find one eligible and one ineligible corridor in live state.
+    eligible = next(
+        (c for c in state.corridor_metrics if (c.get("notification_count") or 0) >= 10),
+        None,
+    )
+    assert eligible is not None, "expected at least one eligible corridor in live state"
+
+    out = get_corridor_hazard_probability(
+        eligible["commodity_hs"],
+        eligible["destination_m49"],
+        eligible["origin_m49"],
+        state,
+    )
+    if (eligible.get("bilateral_import_kg") or 0) > 0:
+        assert out["eligible"] is True
+        assert out["p_hat"] is not None
+        assert out["p_hat"] >= 0
+    else:
+        assert out["eligible"] is False
+        assert "trade footprint" in (out["eligibility_reason"] or "")
+
+    ineligible = next(
+        (c for c in state.corridor_metrics if 0 < (c.get("notification_count") or 0) < 10),
+        None,
+    )
+    if ineligible is not None:
+        out2 = get_corridor_hazard_probability(
+            ineligible["commodity_hs"],
+            ineligible["destination_m49"],
+            ineligible["origin_m49"],
+            state,
+        )
+        assert out2["eligible"] is False
+        assert out2["p_hat"] is None
+        assert "10 notifications" in (out2["eligibility_reason"] or "").lower() or \
+               "have " in (out2["eligibility_reason"] or "").lower()
+
+
+def test_methodology_catalogue_has_hazard_probability_entry():
+    """Glossary + Methodology tab consume this; entry must exist with bands."""
+    from defensefood.api.methodology_catalogue import METHODOLOGY_BY_KEY
+
+    entry = METHODOLOGY_BY_KEY.get("hazard_probability")
+    assert entry is not None
+    assert entry["section"] == "6.4"
+    assert "scale" in entry and len(entry["scale"]) >= 3
+    assert "formula_latex" in entry
+    assert "dgi" in entry["related"]

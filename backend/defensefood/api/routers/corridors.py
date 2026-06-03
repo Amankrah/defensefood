@@ -478,6 +478,106 @@ def get_corridor_hazard(
     return {"error": "Corridor not found"}
 
 
+# Eligibility threshold for Eq. 35 P̂(hazard|trade); the blueprint requires
+# ≥10 notifications over 5 years before treating the ratio as informative.
+_PHAT_MIN_NOTIFICATIONS = 10
+
+
+@router.get("/{commodity_hs}/{dest_m49}/{origin_m49}/hazard-probability")
+def get_corridor_hazard_probability(
+    commodity_hs: str,
+    dest_m49: int,
+    origin_m49: int,
+    state: AppState = Depends(get_state),
+):
+    """Empirical hazard probability P̂(hazard | c, i, j) — Sec. 6.4 Eq. (35).
+
+    ``P̂ = R / (M / m̄(c))`` where R is the corridor's RASFF notification
+    count, M is the bilateral import quantity (kg), and m̄(c) is the average
+    shipment size for the commodity's HS-2 chapter.
+
+    Gated on ``notification_count >= 10`` per the blueprint — below that the
+    ratio is too noisy and the endpoint returns ``eligible: false`` with the
+    reason. P̂ is a **lower bound** (only detected hazards count); cross-check
+    against DGI (§4.5) to distinguish "more fraud" from "more detection".
+    """
+    from defensefood.pipeline.network_pipeline import lookup_avg_shipment_size
+    from defensefood_core import network as _net  # type: ignore[attr-defined]
+
+    # Locate the corridor in the cached metrics so we get the canonical
+    # notification_count, total import qty, and origin/destination labels.
+    corridor = None
+    for c in state.corridor_metrics:
+        if (
+            c.get("commodity_hs") == commodity_hs
+            and c.get("destination_m49") == dest_m49
+            and c.get("origin_m49") == origin_m49
+        ):
+            corridor = c
+            break
+
+    if corridor is None:
+        return {
+            "commodity_hs": commodity_hs,
+            "destination_m49": dest_m49,
+            "origin_m49": origin_m49,
+            "p_hat": None,
+            "eligible": False,
+            "eligibility_reason": "Corridor not found",
+        }
+
+    notification_count = int(corridor.get("notification_count") or 0)
+    bilateral_kg = float(corridor.get("bilateral_import_kg") or 0.0)
+    avg_shipment_kg = lookup_avg_shipment_size(
+        state.avg_shipment_lookup, commodity_hs
+    )
+
+    if notification_count < _PHAT_MIN_NOTIFICATIONS:
+        return {
+            "commodity_hs": commodity_hs,
+            "destination_m49": dest_m49,
+            "origin_m49": origin_m49,
+            "notification_count": notification_count,
+            "total_import_kg": bilateral_kg,
+            "avg_shipment_kg": avg_shipment_kg,
+            "p_hat": None,
+            "eligible": False,
+            "eligibility_reason": (
+                f"needs ≥{_PHAT_MIN_NOTIFICATIONS} notifications; have {notification_count}"
+            ),
+        }
+
+    if bilateral_kg <= 0.0 or avg_shipment_kg <= 0.0:
+        return {
+            "commodity_hs": commodity_hs,
+            "destination_m49": dest_m49,
+            "origin_m49": origin_m49,
+            "notification_count": notification_count,
+            "total_import_kg": bilateral_kg,
+            "avg_shipment_kg": avg_shipment_kg,
+            "p_hat": None,
+            "eligible": False,
+            "eligibility_reason": "No bilateral trade footprint to anchor the ratio",
+        }
+
+    p_hat = _net.compute_hazard_probability(
+        float(notification_count), bilateral_kg, avg_shipment_kg
+    )
+    estimated_shipments = bilateral_kg / avg_shipment_kg if avg_shipment_kg else 0.0
+    return {
+        "commodity_hs": commodity_hs,
+        "destination_m49": dest_m49,
+        "origin_m49": origin_m49,
+        "notification_count": notification_count,
+        "total_import_kg": bilateral_kg,
+        "avg_shipment_kg": avg_shipment_kg,
+        "estimated_shipments": estimated_shipments,
+        "p_hat": p_hat,
+        "eligible": True,
+        "eligibility_reason": None,
+    }
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Research-mode raw endpoints — read-only per-lane slices for the workbench.
 # ──────────────────────────────────────────────────────────────────────────

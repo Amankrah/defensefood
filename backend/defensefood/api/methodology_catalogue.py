@@ -721,6 +721,49 @@ METHODOLOGY: list[dict[str, Any]] = [
         "related": ["his", "crs"],
         "source": "defensefood_core::network::compute_orps",
     },
+    {
+        "key": "hazard_probability",
+        "name": "Empirical hazard probability",
+        "abbr": "P̂",
+        "section": "6.4",
+        "blueprint_eq": "Eq. (35)",
+        "formula_latex": (
+            r"\hat{P}(\text{hazard} \mid c, i, j) = \frac{R(c,i,j,T)}{M(c,i,j,T) / \bar{m}(c)}"
+        ),
+        "formula_plain": (
+            "Notifications divided by estimated number of shipments — read as the "
+            "share of shipments that triggered a hazard alert."
+        ),
+        "inputs": [
+            "R (notification count over observation window)",
+            "M (total bilateral imports, kg)",
+            "m̄(c) (median shipment size per HS-2 chapter, kg)",
+        ],
+        "definition": (
+            "Probability of a hazard being detected on this corridor per estimated "
+            "shipment. Eq. (35) requires ≥10 notifications before the ratio is "
+            "considered informative — below that, the endpoint returns 'eligible: "
+            "false'. P̂ is a lower bound (only detected hazards count) and must be "
+            "cross-referenced with the Detection Gap Indicator (§4.5) to distinguish "
+            "'more fraud' from 'more detection'. m̄(c) is approximated as the median "
+            "Comtrade row net weight within the commodity's HS-2 chapter."
+        ),
+        "scale": [
+            {"min": 0.0, "max": 0.001, "label": "Rare detection", "band": _LOW,
+             "advice": "Hazards are rare per shipment; baseline surveillance is fine."},
+            {"min": 0.001, "max": 0.01, "label": "Occasional detection", "band": _MED,
+             "advice": "A handful of shipments per thousand draw a notification; cross-check DGI."},
+            {"min": 0.01, "max": 1.0, "label": "Frequent detection", "band": _HIGH,
+             "advice": "More than one shipment in a hundred draws a notification; sustained scrutiny warranted."},
+        ],
+        "when_matters": (
+            "When you want a calibrated detection rate per shipment, not just a "
+            "hazard intensity — cross-reference with DGI to distinguish 'more fraud' "
+            "from 'more detection'."
+        ),
+        "related": ["his", "dgi", "z_volume"],
+        "source": "defensefood_core::network::compute_hazard_probability",
+    },
     # ── Section 7: Composite ────────────────────────────────────────────
     {
         "key": "cvs",

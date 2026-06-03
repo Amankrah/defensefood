@@ -26,6 +26,7 @@ import type {
   CorridorProfile,
   HazardBreakdown,
   HazardBucket,
+  HazardProbabilityResponse,
   TradeFlowMetrics,
 } from "@/lib/types";
 import { fmt, fmtInt, fmtPct } from "@/lib/utils";
@@ -165,15 +166,18 @@ export default function LaneReport() {
 
   const [profile, setProfile] = useState<CorridorProfile | null>(null);
   const [tradeFlow, setTradeFlow] = useState<TradeFlowMetrics | null>(null);
+  const [pHat, setPHat] = useState<HazardProbabilityResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
       api.corridors.full(hs, dest, origin).catch(() => null),
       api.corridors.tradeAnomalies(hs, dest, origin).catch(() => null),
-    ]).then(([prof, tf]) => {
+      api.corridors.hazardProbability(hs, dest, origin).catch(() => null),
+    ]).then(([prof, tf, ph]) => {
       setProfile(prof);
       setTradeFlow(tf);
+      setPHat(ph);
       setLoading(false);
     });
   }, [hs, dest, origin]);
@@ -535,6 +539,44 @@ export default function LaneReport() {
                   verdict={interpretDgi(haz.dgi).verdict}
                   caption="Lane's share of trade minus its share of notifications (≈ [−1, +1])."
                 />
+              </div>
+            )}
+            {pHat && (
+              <div className="mt-3">
+                {pHat.eligible && pHat.p_hat != null ? (
+                  <MetricTile
+                    label="Empirical hazard probability"
+                    abbr="P̂"
+                    metricKey="hazard_probability"
+                    value={`${(pHat.p_hat * 100).toFixed(2)}%`}
+                    band={
+                      pHat.p_hat >= 0.01
+                        ? "high"
+                        : pHat.p_hat >= 0.001
+                        ? "med"
+                        : "low"
+                    }
+                    bar={Math.min(pHat.p_hat / 0.02, 1)}
+                    verdict={
+                      pHat.p_hat >= 0.01
+                        ? "Frequent detection — more than one alert per hundred shipments."
+                        : pHat.p_hat >= 0.001
+                        ? "Occasional detection — a few alerts per thousand shipments."
+                        : "Rare detection per shipment; baseline surveillance is fine."
+                    }
+                    caption={
+                      `Eq. 35 lower bound. ${pHat.notification_count ?? 0} alerts over ` +
+                      `${pHat.estimated_shipments != null ? Math.round(pHat.estimated_shipments).toLocaleString() : "?"} ` +
+                      `estimated shipments (m̄ ≈ ${pHat.avg_shipment_kg?.toLocaleString() ?? "?"} kg). ` +
+                      "Cross-reference with DGI."
+                    }
+                  />
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/60 p-3 text-[11px] text-slate-500">
+                    <span className="mr-1 font-semibold text-slate-700">P̂ (Eq. 35):</span>
+                    Not available — {pHat.eligibility_reason ?? "ineligible"}.
+                  </div>
+                )}
               </div>
             )}
             {haz.hazard_breakdown && (

@@ -448,6 +448,20 @@ export interface RawTradeRow {
   qtyUnitAbbr: string;
 }
 
+/** Empirical hazard probability (Sec. 6.4 Eq. 35). p_hat is null when ineligible. */
+export interface HazardProbabilityResponse {
+  commodity_hs: string;
+  destination_m49: number;
+  origin_m49: number;
+  notification_count?: number;
+  total_import_kg?: number;
+  avg_shipment_kg?: number;
+  estimated_shipments?: number;
+  p_hat: number | null;
+  eligible: boolean;
+  eligibility_reason: string | null;
+}
+
 export interface LaneTimeSeries {
   commodity_hs: string;
   destination_m49: number;

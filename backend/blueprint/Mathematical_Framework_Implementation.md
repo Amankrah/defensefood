@@ -1,26 +1,20 @@
-# Mathematical Framework — Implementation Reference
+# Mathematical Framework: Implementation Reference
 
-> **Math preview:** Equations use `$…$` (inline) and `$$…$$` (display). In VS Code / Cursor, enable **Markdown › Math: Enabled** (`markdown.math.enabled`) and open **Markdown Preview** (`Ctrl+Shift+V`). GitHub renders the same delimiters natively.
+This document maps the blueprint *Mathematical Framework: EU Food Fraud Vulnerability Intelligence System* (v1.0, February 2026) to the DefenceFood implementation. Each numbered equation is stated as in the framework, then related to the data sources, computation path (Rust numerical core, Python orchestration, REST API), and deployment status in the current build.
 
-**Blueprint:** *Mathematical Framework: EU Food Fraud Vulnerability Intelligence System* v1.0 (February 2026)  
-**Purpose:** Numbered equations as **actually computed** in DefenseFood today: Rust numerical core → Python orchestration → HTTP API → source data.  
-**Audience:** Researchers and engineers who need the “what / how / why” without reading source trees.
-
----
-
-## How to read this document
+The tables below use the following columns where a metric is discussed in detail:
 
 | Column | Meaning |
 |--------|---------|
-| **Eq.** | Equation number in the blueprint PDF |
-| **Symbol** | Primary output name in API JSON |
-| **Engine** | Where the numeric formula runs (always the Rust extension for scored quantities) |
-| **When computed** | Startup batch vs on-demand per corridor |
+| **Eq.** | Equation number in the blueprint |
+| **Symbol** | Field name in the API response |
+| **Engine** | Rust function that evaluates the expression |
+| **When computed** | Startup batch versus on-demand evaluation |
 | **Data** | External datasets and join assumptions |
-| **API** | Where the value appears in the REST surface |
-| **Status** | `Live` = populated in normal runs; `Partial` / `Planned` = caveats below |
+| **API** | Endpoints that expose the quantity |
+| **Status** | Implemented (`Live`), partial, or planned |
 
-Every equation below uses the symbols in this glossary. Subscripts $(c,i,j,t)$ are omitted in prose when the meaning is clear.
+Symbols are defined before use. In running text, the subscripts $(c,i,j,t)$ are often suppressed when the corridor context is already fixed.
 
 ---
 
@@ -30,20 +24,20 @@ Every equation below uses the symbols in this glossary. Subscripts $(c,i,j,t)$ a
 
 | Symbol | Meaning |
 |--------|---------|
-| $c$ | **Commodity** — HS code on the lane (RASFF `hs_code`, Comtrade `cmdCode`) |
-| $i$ | **Destination country** — importing / “attention” market (Comtrade **reporter**; RASFF affected country) |
-| $j$ | **Origin country** — exporting / RASFF **origin** (Comtrade **partner**) |
-| $t$ | **Trade / supply year** — annual Comtrade `period` and FAOSTAT year used for §2–§3 |
-| $t_r$ | **Notification month** — RASFF alert date as YYYYMM (used in HIS decay) |
+| $c$ | **Commodity:** HS code on the lane (RASFF `hs_code`, Comtrade `cmdCode`) |
+| $i$ | **Destination country:** importing or “attention” market (Comtrade reporter; RASFF affected country) |
+| $j$ | **Origin country:** exporting / RASFF **origin** (Comtrade **partner**) |
+| $t$ | **Trade / supply year:** annual Comtrade `period` and FAOSTAT year used for §2–§3 |
+| $t_r$ | **Notification month:** RASFF alert date as YYYYMM (used in HIS decay) |
 | $r$ | A single **RASFF notification** (one row in the alert database) |
-| $h$ | **Hazard type** — one of six taxonomy families in $\mathcal{H}$ |
-| $\cdot$ | **Sum over all partners** — e.g. $M(c,i,\cdot,t) = \sum_j M(c,i,j,t)$ |
+| $h$ | **Hazard type:** one of six taxonomy families in $\mathcal{H}$ |
+| $\cdot$ | **Sum over all partners:** e.g. $M(c,i,\cdot,t) = \sum_j M(c,i,j,t)$ |
 | $\mathcal{O}$ | Set of **import partner** countries for destination $i$ |
 | $\mathcal{N}$ | Set of **destination** countries in scope (EU members in ORPS sums) |
 | $\mathcal{H}$ | Set of **six hazard families** (biological, pesticides, heavy metals, mycotoxins, other chemical, regulatory) |
 | $\mathcal{R}(c,i,j)$ | Set of RASFF notifications that touch corridor $(c,i,j)$ |
 
-**Corridor:** the lane $(c, i, j)$ — one commodity, one destination, one origin. The API stores one metric record per corridor (plus RASFF role metadata).
+A **corridor** is the lane $(c, i, j)$: one commodity, one destination country, and one origin country. The API persists one metric record per corridor, together with RASFF role metadata where applicable.
 
 ---
 
@@ -53,21 +47,21 @@ Every equation below uses the symbols in this glossary. Subscripts $(c,i,j,t)$ a
 
 | Symbol | What it is | Units / field |
 |--------|------------|---------------|
-| $M(c,i,j,t)$ | **Bilateral import quantity** — what country $i$ reports importing commodity $c$ from origin $j$ in year $t$ | kg (`netWgt`), flow **M** (imports) |
-| $M(c,i,\cdot,t)$ | **Total imports** of $c$ into $i$ from all origins in year $t$ | kg — sum over partners |
+| $M(c,i,j,t)$ | **Bilateral import quantity:** what country $i$ reports importing commodity $c$ from origin $j$ in year $t$ | kg (`netWgt`), flow **M** (imports) |
+| $M(c,i,\cdot,t)$ | **Total imports** of $c$ into $i$ from all origins in year $t$ | kg; sum over partners |
 | $X(c,i,\cdot,t)$ | **Total exports** of $c$ from country $i$ in year $t$ | kg, flow **X** (exports) |
-| $X_j(c,j,i,t)$ | **Mirror export** — what origin $j$ reports exporting to destination $i$ (used in MTD) | kg |
-| $V(c,i,j,t)$ | **Bilateral import value** — USD value of the same flow as $M$ | USD (`primaryValue`) |
-| $UV(c,i,j,t)$ | **Unit value** — price proxy $V / M$ | USD/kg |
+| $X_j(c,j,i,t)$ | **Mirror export:** what origin $j$ reports exporting to destination $i$ (used in MTD) | kg |
+| $V(c,i,j,t)$ | **Bilateral import value:** USD value of the same flow as $M$ | USD (`primaryValue`) |
+| $UV(c,i,j,t)$ | **Unit value:** price proxy $V / M$ | USD/kg |
 
 #### FAOSTAT / FishStat (production and consumption)
 
 | Symbol | What it is | Units / source |
 |--------|------------|---------------|
-| $P(c,i,t)$ | **Domestic production** of commodity $c$ in country $i$ | kg — QCL / FishStat (seafood) |
-| $D(c,i,t)$ | **Domestic supply for food use** (apparent consumption quantity) | kg — Food Balance Sheets |
-| $\Delta S(c,i,t)$ | **Stock change** — draw-down positive, build-up negative | kg — FBS when available; else 0 |
-| $Pop(i,t)$ | **Population** of country $i$ | persons — for PCC |
+| $P(c,i,t)$ | **Domestic production** of commodity $c$ in country $i$ | kg from QCL or FishStat (seafood) |
+| $D(c,i,t)$ | **Domestic supply for food use** (apparent consumption quantity) | kg from Food Balance Sheets |
+| $\Delta S(c,i,t)$ | **Stock change:** draw-down positive, build-up negative | kg from FBS when available; otherwise 0 |
+| $Pop(i,t)$ | **Population** of country $i$ | persons (for PCC) |
 
 #### RASFF Window (hazard alerts)
 
@@ -76,13 +70,13 @@ Every equation below uses the symbols in this glossary. Subscripts $(c,i,j,t)$ a
 | $R(c,i,j,t)$ | **Notification count** for corridor $(c,i,j)$ in period $t$ | Count of alerts with matching HS, origin $j$, and $i$ in affected countries |
 | $R(c,i,\cdot,t)$ | **Total notifications** for commodity $c$ and destination $i$ (all origins) | Denominator for notification share in DGI |
 | $S(r)$ | **Severity weight** of notification $r$ | $W_{\mathrm{class}} \times W_{\mathrm{risk}}$ (Eq 14) |
-| $W_{\mathrm{class}}(r)$ | **Classification weight** — alert vs border rejection vs information | See Eq (14) table |
-| $W_{\mathrm{risk}}(r)$ | **Risk-decision weight** — serious vs not serious | See Eq (14) table |
-| $\alpha$ | **Temporal decay** for HIS — default **0.90** | Older alerts count less |
+| $W_{\mathrm{class}}(r)$ | **Classification weight:** alert vs border rejection vs information | See Eq (14) table |
+| $W_{\mathrm{risk}}(r)$ | **Risk-decision weight:** serious vs not serious | See Eq (14) table |
+| $\alpha$ | **Temporal decay** for HIS; default **0.90** | Older alerts count less |
 
 ---
 
-### §2 — Dependency metrics (symbols and API names)
+### Section 2: Dependency metrics (symbols and API names)
 
 | Symbol | Name (abbr.) | What it measures |
 |--------|--------------|------------------|
@@ -97,7 +91,7 @@ Every equation below uses the symbols in this glossary. Subscripts $(c,i,j,t)$ a
 
 ---
 
-### §3 — Consumption metrics
+### Section 3: Consumption metrics
 
 | Symbol | Name (abbr.) | What it measures |
 |--------|--------------|------------------|
@@ -109,7 +103,7 @@ Every equation below uses the symbols in this glossary. Subscripts $(c,i,j,t)$ a
 
 ---
 
-### §4 — Hazard metrics
+### Section 4: Hazard metrics
 
 | Symbol | Name (abbr.) | What it measures |
 |--------|--------------|------------------|
@@ -120,7 +114,7 @@ Every equation below uses the symbols in this glossary. Subscripts $(c,i,j,t)$ a
 
 ---
 
-### §5 — Trade-flow anomaly metrics
+### Section 5: Trade-flow anomaly metrics
 
 | Symbol | Name (abbr.) | What it measures |
 |--------|--------------|------------------|
@@ -135,7 +129,7 @@ Every equation below uses the symbols in this glossary. Subscripts $(c,i,j,t)$ a
 
 ---
 
-### §6 — Network aggregates
+### Section 6: Network aggregates
 
 | Symbol | Name (abbr.) | What it measures |
 |--------|--------------|------------------|
@@ -148,13 +142,13 @@ Every equation below uses the symbols in this glossary. Subscripts $(c,i,j,t)$ a
 
 ---
 
-### §7 — Composite scoring
+### Section 7: Composite scoring
 
 | Symbol | Name (abbr.) | What it measures |
 |--------|--------------|------------------|
 | $x_{\mathrm{norm}}$ | Normalised score | Percentile (or min–max / log-percentile) rank in $[0,1]$ |
 | $CVS$ | Composite vulnerability score | Lane priority 0–1; API: `cvs` |
-| $w_h, w_p, w_{sc}$ | Amplifier weights | Hazard, **price anomaly (PAS)**, **supply-chain (SCCS)** — default 1 each |
+| $w_h, w_p, w_{sc}$ | Amplifier weights | Hazard, **price anomaly (PAS)**, **supply-chain (SCCS):** default 1 each |
 | $PAS_{\mathrm{norm}}$ | Price anomaly signal | Blueprint slot; **not populated** (treated as 0) |
 | $SCCS_{\mathrm{norm}}$ | Supply-chain complexity | Blueprint slot; **not populated** (treated as 0) |
 
@@ -172,29 +166,26 @@ Every equation below uses the symbols in this glossary. Subscripts $(c,i,j,t)$ a
 
 ---
 
-## §1 — Notation and primary variables (no scored equations)
+## Section 1: Notation and primary variables
 
-Blueprint §1 is the index-set and raw-variable layer; the tables above are the operational definitions used in code. At startup the system loads:
+Section 1 of the blueprint specifies index sets and raw variables only. The glossary above gives the operational definitions used in software. At application startup the following sources are loaded:
 
 | Data | Role in pipeline |
 |------|------------------|
-| Comtrade merged CSV | $M$, $X$, $V$ → §2, §5, DGI |
-| FAOSTAT QCL + FBS (+ FishStat for seafood $P$) | $P$, $D$, $\Delta S$, $Pop$ → §2–§3 |
-| RASFF Excel | Defines corridors; $R$, $S(r)$ → §4 |
-| UN M49 name lookup | Joins RASFF country names to Comtrade numeric codes |
+| Comtrade merged CSV | Supplies $M$, $X$, and $V$ for Sections 2, 5, and DGI |
+| FAOSTAT QCL and FBS (FishStat for seafood $P$) | Supplies $P$, $D$, $\Delta S$, and $Pop$ for Sections 2 and 3 |
+| RASFF Excel | Defines corridors; supplies $R$ and $S(r)$ for Section 4 |
+| UN M49 name lookup | Aligns RASFF country names with Comtrade numeric codes |
 
-**Why two “destinations”:** RASFF *affected countries* (notifier, distribution, follow-up, attention) define alert lanes. Comtrade *reporter* is the importing market for trade statistics. The system **joins on the same $(c,i,j)$ key** but does not prove a specific alert batch ended in country $i$; structural metrics describe aggregate bilateral trade, not lot traceability.
+RASFF *affected countries* (notifier, distribution, follow-up, attention) define alert lanes, whereas Comtrade *reporter* denotes the importing market in trade statistics. The implementation joins RASFF and Comtrade on the common key $(c,i,j)$. That join supports structural inference on bilateral trade; it does not establish the final destination of a particular notified lot.
 
 ---
 
-## §2 — Commodity dependency models
+## Section 2: Commodity dependency models
 
-**Purpose:** Quantify how much destination $i$ relies on origin $j$ for commodity $c$ in trade year $t$.  
-**When computed:** Once at API startup for every RASFF-derived corridor, using the **latest Comtrade year** in the merged trade file.  
-**Batch output fields:** `ds_prime`, `idr`, `ocs`, `bdi`, `hhi`, `sci`, `sci_norm`, `ssr`, `provenance`, `bilateral_import_kg`, `total_imports_kg`, `production_kg`, `idr_gt_1`.  
-**API:** Corridor list, corridor profile, `/research/coverage`, dependency time-series on corridor detail.
+Section 2 quantifies the reliance of destination $i$ on origin $j$ for commodity $c$ in trade year $t$. Metrics are computed once at API startup for each RASFF-derived corridor, using the latest annual year present in the merged Comtrade file. Batch fields include `ds_prime`, `idr`, `ocs`, `bdi`, `hhi`, `sci`, `sci_norm`, `ssr`, `provenance`, `bilateral_import_kg`, `total_imports_kg`, `production_kg`, and `idr_gt_1`. They are exposed on the corridor list, corridor profile, `/research/coverage`, and the dependency time-series on the lane report.
 
-**Trade aggregation rules (why numbers differ from raw Comtrade UI):**
+**Trade aggregation** (differences from raw Comtrade extracts):
 
 1. Loads merged annual Comtrade with duplicate row collapse on $(\text{period}, \text{reporter}, \text{partner}, \text{HS}, \text{flow})$.
 2. **HS rollup:** If the corridor HS exists exactly for reporter $i$, use only that code; otherwise sum **child** HS codes (longer prefixes) to avoid double-counting parent+child published together.
@@ -203,7 +194,7 @@ Blueprint §1 is the index-set and raw-variable layer; the tables above are the 
 
 ---
 
-### Eq (1) — Domestic supply (full balance)
+### Equation (1). Domestic supply (full balance)
 
 $$
 DS(c,i,t) = P(c,i,t) + M(c,i,\cdot,t) - X(c,i,\cdot,t) + \Delta S(c,i,t)
@@ -217,7 +208,7 @@ $$
 
 ---
 
-### Eq (2) — Apparent domestic supply ($DS^{\prime}$)
+### Equation (2). Apparent domestic supply ($DS^{\prime}$)
 
 $$
 DS^{\prime}(c,i,t) = P(c,i,t) + M(c,i,\cdot,t) - X(c,i,\cdot,t)
@@ -227,12 +218,12 @@ $$
 |--|--|
 | **Symbol** | `ds_prime` |
 | **Engine** | Rust; returns **NaN** if $DS^{\prime} \le 0$ (lane excluded from SCI chain via `dependency_error`) |
-| **Why** | Blueprint boundary: non-positive supply is a data-quality failure, not a score |
+| **Interpretation** | Non-positive apparent supply is treated as a data-quality failure; the lane is excluded from the SCI chain rather than assigned a score |
 | **API** | Corridor `dependency` block; forensic “balance sheet” panel |
 
 ---
 
-### Eq (3) — Import dependency ratio (IDR)
+### Equation (3). Import dependency ratio (IDR)
 
 $$
 IDR(c,i,t) = \frac{M(c,i,\cdot,t)}{DS^{\prime}(c,i,t)}
@@ -243,11 +234,11 @@ $$
 | **Symbol** | `idr` |
 | **Engine** | Rust `compute_idr` |
 | **Interpretation** | $>1$ flagged `idr_gt_1` (re-export hub or missing $P$) |
-| **Why it matters** | Measures national import reliance, not bilateral |
+| **Interpretation** | Measures national import reliance, not bilateral |
 
 ---
 
-### Eq (4) — Origin country share (OCS)
+### Equation (4). Origin country share (OCS)
 
 $$
 OCS(c,i,j,t) = \frac{M(c,i,j,t)}{M(c,i,\cdot,t)}
@@ -257,11 +248,11 @@ $$
 |--|--|
 | **Symbol** | `ocs` |
 | **Engine** | Rust `compute_ocs` |
-| **Requires** | $M(c,i,\cdot,t) > 0$; zero total imports → OCS/HHI/SCI absent (`zero_destination_imports` reason) |
+| **Requires** | $M(c,i,\cdot,t) > 0$; zero total imports; OCS/HHI/SCI absent (`zero_destination_imports` reason) |
 
 ---
 
-### Eq (5) — Bilateral dependency index (BDI)
+### Equation (5). Bilateral dependency index (BDI)
 
 $$
 BDI(c,i,j,t) = \frac{M(c,i,j,t)}{DS^{\prime}(c,i,t)}
@@ -275,7 +266,7 @@ $$
 
 ---
 
-### Eq (6) — Decomposition (identity)
+### Equation (6). Decomposition (identity)
 
 $$
 BDI(c,i,j,t) = IDR(c,i,t) \times OCS(c,i,j,t)
@@ -284,11 +275,11 @@ $$
 | | |
 |--|--|
 | **Status** | **Live** (algebraic; tested in engine) |
-| **Why** | Separates “how import-dependent is the country” from “how much of that import is this origin” |
+| **Interpretation** | IDR measures national import reliance; OCS measures the bilateral share within total imports |
 
 ---
 
-### Eq (7) — Herfindahl–Hirschman index (HHI)
+### Equation (7). Herfindahl–Hirschman index (HHI)
 
 $$
 HHI(c,i,t) = \sum_{j \in \mathcal{O}} OCS(c,i,j,t)^2
@@ -299,11 +290,11 @@ $$
 | **Symbol** | `hhi` |
 | **Engine** | Rust `compute_hhi` on partner share vector |
 | **Data** | All import partners for $(c,i,t)$ at resolved HS granularity |
-| **Why** | Amplifies SCI when the import market is concentrated, not only when $j$ is large |
+| **Interpretation** | HHI amplifies SCI when the partner mix is concentrated, not only when origin $j$ holds a large bilateral share |
 
 ---
 
-### Eq (8) — Self-sufficiency ratio (SSR)
+### Equation (8). Self-sufficiency ratio (SSR)
 
 $$
 SSR(c,i,t) = \frac{P(c,i,t)}{D(c,i,t)}
@@ -318,7 +309,7 @@ $$
 
 ---
 
-### Eq (9) — Supply criticality index (SCI)
+### Equation (9). Supply criticality index (SCI)
 
 $$
 SCI(c,i,j,t) = IDR(c,i,t) \cdot OCS(c,i,j,t) \cdot \bigl(1 + HHI(c,i,t)\bigr)
@@ -329,23 +320,20 @@ $$
 | **Symbol** | `sci` (raw), `sci_norm = SCI/2` after percentile pass |
 | **Engine** | Rust `compute_sci` / `compute_sci_normalised` |
 | **Range** | Raw SCI $\in [0,2]$; norm $\in [0,1]$ |
-| **Why $(1+HHI)$** | Single-origin dominance within a concentrated market increases corridor criticality |
+| **Rationale** | The factor $(1+\mathrm{HHI})$ increases corridor criticality when a concentrated import market is dominated by a single origin |
 | **CVS role** | `sci_norm` is mandatory for full composite score |
 
 ---
 
-## §3 — Consumption demand modelling
+## Section 3: Consumption demand modelling
 
-**Purpose:** Demand-side exploitability — how culturally “sticky” consumption of $c$ is in country $i$.  
-**When computed:** Startup lookups keyed by $(c, i)$ — **destination only** (not origin-specific).  
-**Data:** FAOSTAT Food Balance Sheets (multi-year $D$) + population; FishStat does not drive §3.  
-**API fields:** `pcc`, `crs`, `dis` on corridors; consumption block on full profile.
+Section 3 addresses demand-side exploitability: the extent to which consumption of commodity $c$ in country $i$ is culturally entrenched and therefore difficult to displace. Lookups are built at startup and keyed by $(c,i)$ at the destination only (not by origin). Inputs are drawn from FAOSTAT Food Balance Sheets (multi-year $D$) and population; FishStat does not enter this section. The API exposes `pcc`, `crs`, and `dis` on corridor records and in the consumption block of the full lane profile.
 
-If FAOSTAT is missing, all three are absent and CVS uses the **SCI + HIS fallback** (`cvs_mode = sci_his`).
+When FAOSTAT is unavailable, these quantities are omitted and the composite score falls back to the SCI and HIS formulation (`cvs_mode = sci_his`).
 
 ---
 
-### Eq (10) — Per capita apparent consumption (PCC)
+### Equation (10). Per capita apparent consumption (PCC)
 
 $$
 PCC(c,i,t) = \frac{D(c,i,t)}{Pop(i,t)}
@@ -355,11 +343,11 @@ $$
 |--|--|
 | **Symbol** | `pcc` (kg/capita/year) |
 | **Engine** | Rust `compute_pcc` |
-| **Why** | Feeds ORPS (Eq 33); contextualises market size |
+| **Interpretation** | PCC enters ORPS (Equation 33) and scales hazard-weighted dependency by market size |
 
 ---
 
-### Eq (11) — Commodity consumption rank score (CRS)
+### Equation (11). Commodity consumption rank score (CRS)
 
 $$
 CRS(c,i,t) = 1 - \frac{Rank(c,i,t)-1}{|C|-1}
@@ -369,12 +357,12 @@ $$
 |--|--|
 | **Symbol** | `crs`, then `crs_norm` at scoring |
 | **Engine** | Rust `compute_crs_batch` after ranking all commodities in country $i$ by PCC descending |
-| **Why rank not raw PCC** | Olive oil vs wheat live on different scales; rank is comparable across commodities |
+| **Rationale** | Ranking PCC within the destination makes commodities comparable when absolute per-capita levels differ widely |
 | **CVS role** | When present, hybrid base uses `sci_norm × crs_norm` |
 
 ---
 
-### Eq (12)–(13) — Demand inelasticity (DIS)
+### Equations (12)–(13). Demand inelasticity (DIS)
 
 $$
 \begin{aligned}
@@ -390,20 +378,17 @@ $$
 | **Engine** | Rust `compute_dis` / `compute_cv` |
 | **Window** | Five years ending at target FBS year; needs **≥3** PCC points |
 | **Status** | **Live** on corridor record; **not** wired into CVS hybrid today |
-| **Why** | Stable demand = fraud persists without consumer exit |
+| **Interpretation** | Low coefficient of variation in PCC indicates inelastic demand, which the blueprint associates with persistent fraud exposure |
 
 ---
 
-## §4 — Hazard signal modelling (RASFF integration)
+## Section 4: Hazard signal modelling (RASFF integration)
 
-**Purpose:** Turn RASFF alerts into time-decayed, severity-weighted lane signals and compare them to trade.  
-**When computed:** Startup from extracted corridors → Rust notification objects.  
-**Data:** RASFF Window Excel; hazard taxonomy parsed from `{category}` tokens in hazard text (six families).  
-**API:** `his`, `hdi`, `hazard_breakdown`, `notification_count`, `severity_total`, `dgi`; hazard endpoints and notification lists per corridor.
+Section 4 transforms RASFF alerts into time-decayed, severity-weighted lane-level signals and compares them with trade volumes. Computation runs at startup on corridors extracted from the RASFF Window workbook; notifications are represented as Rust objects for the hazard engine. Hazard categories are parsed from `{category}` tokens in the hazard text (six families). The API returns `his`, `hdi`, `hazard_breakdown`, `notification_count`, `severity_total`, and `dgi`, with additional hazard and notification endpoints per corridor.
 
 ---
 
-### §4.1 — Corridor definition (structural, not a single equation)
+### Section 4.1: Corridor definition (structural, not a single equation)
 
 For each notification $r$:
 
@@ -413,7 +398,7 @@ For each notification $r$:
 
 **Implemented lanes:** Cartesian product $(c, i, j)$ with $i \neq j$; operator field excluded (FBO, not geography).
 
-**Roles stored per lane:** `notifier`, `distribution`, `followUp`, `attention` → aggregated `destination_roles`, `role_counts`.
+**Roles stored per lane:** `notifier`, `distribution`, `followUp`, `attention`; aggregated `destination_roles`, `role_counts`.
 
 **Market presence label** (downstream filter, not in HIS formula):
 
@@ -428,7 +413,7 @@ For each notification $r$:
 
 ---
 
-### Eq (14) — Notification severity weight
+### Equation (14). Notification severity weight
 
 $$
 S(r) = W_{class}(r) \cdot W_{risk}(r) \in [0.1, 1.0]
@@ -451,11 +436,11 @@ $$
 | | |
 |--|--|
 | **Engine** | Rust `compute_severity` |
-| **Why** | Recent border rejection ≠ passive information notice |
+| **Interpretation** | Border rejections receive higher classification weight than passive information notices |
 
 ---
 
-### Eq (15) — Hazard intensity score (HIS)
+### Equation (15). Hazard intensity score (HIS)
 
 $$
 HIS(c,i,j,t) = \sum_{r \in \mathcal{R}(c,i,j)} S(r) \cdot \alpha^{\,t - t_r}
@@ -463,16 +448,16 @@ $$
 
 | | |
 |--|--|
-| **Symbol** | `his` → `his_norm` (log-percentile across corridors at scoring) |
+| **Symbol** | `his`; `his_norm` (log-percentile across corridors at scoring) |
 | **Engine** | Rust `compute_his` |
 | **$\mathcal{R}(c,i,j)$** | Notifications with matching HS, origin $j$, and $i \in$ `affected_countries` |
 | **$t, t_r$** | YYYYMM month indices (not calendar-year subtraction) |
 | **$\alpha$** | Default **0.90** (~6.6 month half-life, Eq 16) |
-| **Why unbounded** | Many severe alerts should dominate; normalisation is deferred to §7 |
+| **Rationale** | HIS is left unbounded so multiple severe alerts can dominate; normalisation is applied in Section 7 |
 
 ---
 
-### Eq (16) — Half-life (diagnostic)
+### Equation (16). Half-life (diagnostic)
 
 $$
 t_{1/2} = \frac{-\ln 2}{\ln \alpha}
@@ -485,7 +470,7 @@ $$
 
 ---
 
-### Eq (17)–(18) — Hazard diversity index (HDI)
+### Equations (17)–(18). Hazard diversity index (HDI)
 
 $$
 \begin{aligned}
@@ -501,11 +486,11 @@ $$
 | **Symbol** | `hdi` (already normalised 0–1) |
 | **Engine** | Rust `compute_hdi` |
 | **Counting** | Multi-category alerts split fractional credit across categories for diversity |
-| **Why** | Distinguishes single-issue recurrence from broad-spectrum failure |
+| **Interpretation** | HDI distinguishes repeated single-hazard events from diversified hazard portfolios |
 
 ---
 
-### Eq (19) — Detection gap indicator (DGI)
+### Equation (19). Detection gap indicator (DGI)
 
 $$
 DGI(c,i,j,t) = \frac{M(c,i,j,t)}{M(c,i,\cdot,t)} - \frac{R(c,i,j,t)}{R(c,i,\cdot,t)} = OCS - R_{share}
@@ -516,21 +501,18 @@ $$
 | **Symbol** | `dgi` |
 | **Engine** | Rust `compute_dgi_from_counts` |
 | **When** | Startup, only if bilateral and total imports **and** at least one destination notification exist |
-| **Why** | Positive DGI + high BDI → high trade share, low alert share → possible under-inspection |
+| **Interpretation** | Positive DGI together with high BDI indicates a large trade share relative to alert share, consistent with possible under-inspection |
 | **API** | Full corridor profile hazard block; not in CVS |
 
 ---
 
-## §5 — Trade flow analysis
+## Section 5: Trade flow analysis
 
-**Purpose:** Price, volume, mirror-reporting, and concentration **dynamics** from Comtrade.  
-**When computed:** **On demand** when requesting a corridor **full profile** or **trade-anomalies** endpoint (not stored on the startup corridor list).  
-**Period:** Latest year in trade file for levels; **prior year** for Δ metrics; **full history** for volume z-score.  
-**API:** `trade_flow` object: `unit_value`, `z_uv`, `z_volume`, `z_volume_periods_available`, `z_volume_window_k`, `mtd`, `delta_hhi`, `delta_ocs`, `peer_unit_values`.
+Section 5 derives price, volume, mirror-reporting, and concentration dynamics from Comtrade. These quantities are evaluated on demand when a corridor full profile or trade-anomalies endpoint is requested; they are not stored on the startup corridor list. Levels use the latest year in the trade file; year-on-year changes use the prior year; the volume z-score draws on the full bilateral history. Results appear under `trade_flow` (`unit_value`, `z_uv`, `z_volume`, `z_volume_periods_available`, `z_volume_window_k`, `mtd`, `delta_hhi`, `delta_ocs`, `peer_unit_values`).
 
 ---
 
-### Eq (20) — Unit value
+### Equation (20). Unit value
 
 $$
 UV(c,i,j,t) = \frac{V(c,i,j,t)}{M(c,i,j,t)} \quad [\$/\text{kg}]
@@ -543,7 +525,7 @@ $$
 
 ---
 
-### Eq (21)–(22) — Cross-origin mean and std (peer basket)
+### Equations (21)–(22). Cross-origin mean and standard deviation (peer basket)
 
 $$
 \mu_{UV}(c,i,t), \quad \sigma_{UV}(c,i,t)
@@ -553,7 +535,7 @@ Computed across **all import partners** for $(c,i,t)$ at exact HS match in the o
 
 ---
 
-### Eq (23) — Unit value z-score
+### Equation (23). Unit value z-score
 
 $$
 Z_{UV}(c,i,j,t) = \frac{UV_{ij} - \mu_{UV}}{\sigma_{UV}}
@@ -563,11 +545,11 @@ $$
 |--|--|
 | **Symbol** | `z_uv` |
 | **Engine** | Rust batch z-score over partner UV vector |
-| **Why** | Flags under- or over-pricing vs peer origins to same destination |
+| **Interpretation** | Unit-value z-scores flag pricing below or above the cross-origin peer basket for the same destination |
 
 ---
 
-### Eq (24)–(26) — Volume anomaly (rolling)
+### Equations (24)–(26). Volume anomaly (rolling)
 
 $$
 \begin{aligned}
@@ -587,7 +569,7 @@ $$
 
 ---
 
-### Eq (27) — Mirror trade discrepancy (MTD)
+### Equation (27). Mirror trade discrepancy (MTD)
 
 $$
 MTD(c,i,j,t) = \frac{\left|M_i(c,i,j,t) - X_j(c,j,i,t)\right|}{\max(M_i, X_j)}
@@ -599,11 +581,11 @@ $$
 | **Engine** | Rust `compute_mtd` |
 | **$M_i$** | Reporter $i$ import flow M |
 | **$X_j$** | Reporter $j$ export flow X to partner $i$ |
-| **Why** | Persistent divergence suggests mis-reporting or transit fraud |
+| **Interpretation** | Sustained mirror-trade divergence may indicate mis-reporting or transit-related fraud |
 
 ---
 
-### Eq (28) — Concentration shift (ΔHHI)
+### Equation (28). Concentration shift (ΔHHI)
 
 $$
 \Delta HHI(c,i,t) = HHI(c,i,t) - HHI(c,i,t-1)
@@ -617,7 +599,7 @@ $$
 
 ---
 
-### Eq (29) — Origin share shift (ΔOCS)
+### Equation (29). Origin share shift (ΔOCS)
 
 $$
 \Delta OCS(c,i,j,t) = OCS(c,i,j,t) - OCS(c,i,j,t-1)
@@ -627,19 +609,17 @@ $$
 |--|--|
 | **Symbol** | `delta_ocs` |
 | **Engine** | Rust `compute_delta_ocs` |
-| **Why** | Detects origin switching / re-routing at lane level |
+| **Interpretation** | Year-on-year changes in OCS detect origin switching or re-routing on the lane |
 
 ---
 
-## §6 — Origin–attention country network
+## Section 6: Origin-attention country network
 
-**Purpose:** Aggregate lane-level metrics to **country** views: inbound exposure (ACEP) and outbound propagation (ORPS).  
-**When computed:** On request when calling country network endpoints (graph built from startup corridor metrics).  
-**Graph:** Directed edges $j \to i$ per $(c,i,j)$ with weights below.
+Section 6 lifts lane-level metrics to country-scale summaries of inbound exposure (ACEP) and outbound propagation (ORPS). The exposure graph is assembled from startup corridor metrics and evaluated when country or network endpoints are invoked. Each directed edge $j \to i$ for corridor $(c,i,j)$ carries the weights defined in the following equations.
 
 ---
 
-### Eq (30)–(32) — Edge weights
+### Equations (30)–(32). Edge weights
 
 $$
 w_{trade} = M(c,i,j,t), \quad w_{hazard} = HIS(c,i,j,t), \quad w_{dep} = BDI(c,i,j,t)
@@ -653,7 +633,7 @@ $$
 
 ---
 
-### Eq (33) — Origin risk propagation score (ORPS)
+### Equation (33). Origin risk propagation score (ORPS)
 
 $$
 ORPS(j,c,t) = \sum_{i \in \mathcal{N}} BDI(c,i,j,t) \cdot HIS(c,i,j,t) \cdot PCC(c,i,t)
@@ -664,11 +644,11 @@ $$
 | **API** | `GET /api/v1/countries/{m49}/orps-by-commodity` |
 | **Default sum** | **`confirmed` edges only** (distribution/followUp market presence) |
 | **Variant** | Role-split buckets (`confirmed`, `detected`, `informational`, `unknown`) |
-| **Why filter** | Avoid inflating ORPS with transit-only attention mentions |
+| **Rationale** | Summation over confirmed edges limits inflation from transit-only attention mentions |
 
 ---
 
-### Eq (34) — Attention country exposure profile (ACEP)
+### Equation (34). Attention country exposure profile (ACEP)
 
 $$
 ACEP(i,t) = \sum_{c,j} BDI(c,i,j,t) \cdot HIS(c,i,j,t) \cdot CRS(c,i,t)
@@ -678,11 +658,11 @@ $$
 |--|--|
 | **API** | `GET /api/v1/countries/{m49}/acep`, exposure profile |
 | **Default sum** | **`confirmed` inbound edges only** |
-| **Why CRS not PCC** | Inbound profile weights commodities important **in the destination diet** |
+| **Rationale** | ACEP weights by CRS so inbound exposure reflects dietary importance in the destination market |
 
 ---
 
-### Eq (35) — Empirical hazard probability
+### Equation (35). Empirical hazard probability
 
 $$
 \hat P(\text{hazard} \mid c,i,j) = \frac{R(c,i,j,T)}{M(c,i,j,T) / \bar m(c)}
@@ -690,20 +670,18 @@ $$
 
 | | |
 |--|--|
-| **Status** | **Planned** — implemented in Rust engine, **not** exposed in API or dashboard |
-| **Why deferred** | Needs shipment-size prior and long RASFF history thresholds per blueprint |
+| **Status** | **Planned:** implemented in Rust engine, **not** exposed in API or dashboard |
+| **Rationale** | Exposure in the API awaits calibration of shipment-size priors and longer RASFF histories specified in the blueprint |
 
 ---
 
-## §7 — Composite vulnerability scoring
+## Section 7: Composite vulnerability scoring
 
-**Purpose:** Rank lanes for inspection priority.  
-**When computed:** API startup immediately after dependency + hazard enrichment.  
-**API:** `cvs`, `cvs_mode`, `cvs_hazard_only`, `cvs_missing_inputs`, `sci_norm`, `his_norm`, `crs_norm`; `POST /api/v1/scores/recalculate` with config; data-quality labels after scoring.
+Section 7 normalises sub-scores and composes the composite vulnerability score (CVS) used to rank lanes for inspection priority. Normalisation and composition run at API startup immediately after dependency and hazard enrichment. The API exposes `cvs`, `cvs_mode`, `cvs_hazard_only`, `cvs_missing_inputs`, and the normalised components; scores may be recomputed via `POST /api/v1/scores/recalculate`. Data-quality labels are attached after scoring.
 
 ---
 
-### Eq (36) — Min–max normalisation
+### Equation (36). Min–max normalisation
 
 $$
 x_{norm} = \frac{x - x_{min}}{x_{max} - x_{min}}
@@ -716,7 +694,7 @@ $$
 
 ---
 
-### Eq (37) — Percentile rank normalisation
+### Equation (37). Percentile rank normalisation
 
 $$
 x_{norm} = \text{rank}(x) / (N-1)
@@ -725,11 +703,11 @@ $$
 | | |
 |--|--|
 | **Applied to** | `sci`, `crs` (and `his` if not using log variant) |
-| **Why default** | Robust to skewed corridor distributions |
+| **Rationale** | Percentile ranks are robust to skewed corridor score distributions |
 
 ---
 
-### Eq (38) — Log-percentile normalisation
+### Equation (38). Log-percentile normalisation
 
 $$
 x_{\mathrm{norm}} = \mathrm{percentile\_rank}\bigl(\ln(1+x)\bigr)
@@ -738,11 +716,11 @@ $$
 | | |
 |--|--|
 | **Applied to** | **`his` always** (blueprint recommendation for exponential alert counts) |
-| **Why** | Prevents a few hyper-active lanes from compressing everyone else |
+| **Interpretation** | Log-percentile normalisation limits compression of the score distribution by a few hyper-active lanes |
 
 ---
 
-### Eq (39) — Weighted linear CVS (optional)
+### Equation (39). Weighted linear CVS (optional)
 
 $$
 CVS = \sum_k w_k x_{k,norm}, \quad \sum w_k = 1
@@ -755,7 +733,7 @@ $$
 
 ---
 
-### Eq (40) — Geometric mean CVS (optional)
+### Equation (40). Geometric mean CVS (optional)
 
 $$
 CVS = \prod_k x_{k,norm}^{w_k}
@@ -764,11 +742,11 @@ $$
 | | |
 |--|--|
 | **Status** | **Live** if `composition_method = geometric_mean` |
-| **Why** | Any zero component drives CVS to zero (conservative) |
+| **Interpretation** | Under the geometric mean, any zero normalised component sets CVS to zero |
 
 ---
 
-### Eq (41) — Hybrid CVS (default)
+### Equation (41). Hybrid CVS (default)
 
 $$
 \begin{aligned}
@@ -781,12 +759,12 @@ $$
 | | |
 |--|--|
 | **Default weights** | $w_h = w_p = w_{sc} = 1$ |
-| **PAS / SCCS** | **Not populated** — treated as **0** (amplifier reduces to $1 + w_h HIS_{norm}$) |
+| **PAS / SCCS** | **Not populated:** treated as **0** (amplifier reduces to $1 + w_h HIS_{norm}$) |
 | **Fallback without CRS** | `cvs_mode = sci_his`: base $SCI_{norm}$, amplifier $1 + w_h HIS_{norm}$, same rescaling |
 | **Missing SCI or HIS** | `cvs = null`; `cvs_hazard_only = his_norm` for hazard-only display |
-| **Why hybrid** | Structural base × demand gate; alerts amplify but cannot invent dependency from thin air |
+| **Rationale** | The hybrid form couples a structural base with a demand gate; hazard signals amplify but cannot substitute for missing dependency |
 
-**Data-quality annotations (post-score):** `sci_unavailable_reason`, `data_quality` (`full` | `hazard_only` | …) explain empty SCI/CVS on list and forensic views.
+Post-scoring annotations (`sci_unavailable_reason`, `data_quality` with values such as `full` and `hazard_only`) document why SCI or CVS may be absent on list and detail views.
 
 ---
 
@@ -825,7 +803,7 @@ flowchart TD
 
 ---
 
-## Implementation gaps vs blueprint (honest checklist)
+## Deviations from the blueprint
 
 | Blueprint item | Status |
 |----------------|--------|
@@ -850,4 +828,4 @@ flowchart TD
 
 ---
 
-*Document version: aligned to DefenseFood codebase as of implementation review. Equation numbers follow blueprint v1.0 (February 2026).*
+*Document version aligned with the DefenceFood codebase at last review. Equation numbering follows blueprint v1.0 (February 2026).*

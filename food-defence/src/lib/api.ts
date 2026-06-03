@@ -9,6 +9,7 @@ import type {
   CountryExposure,
   CoverageReport,
   DistributionResponse,
+  HazardProbabilityResponse,
   LaneTimeSeries,
   MethodologyEntry,
   NetworkGraph,
@@ -62,6 +63,10 @@ export const api = {
       ),
     hazard: (hs: string, dest: number, origin: number) =>
       fetchApi<CorridorMetric>(`/corridors/${hs}/${dest}/${origin}/hazard`),
+    hazardProbability: (hs: string, dest: number, origin: number) =>
+      fetchApi<HazardProbabilityResponse>(
+        `/corridors/${hs}/${dest}/${origin}/hazard-probability`
+      ),
     tradeAnomalies: (hs: string, dest: number, origin: number) =>
       fetchApi<TradeFlowMetrics>(
         `/corridors/${hs}/${dest}/${origin}/trade-anomalies`
