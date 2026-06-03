@@ -790,29 +790,76 @@ Post-scoring annotations (`sci_unavailable_reason`, `data_quality` with values s
 
 ---
 
-## End-to-end computation order (startup)
+## End-to-end computation order
+
+The pipeline is split into three diagrams below, each answering a different reader question:
+
+1. **Data dependencies** — which raw source feeds which section
+2. **Startup orchestration** — the exact sequence inside `_load_data`
+3. **Request-time computation** — what is cached vs computed per request
+
+### 1. Data dependencies (which inputs feed which math)
+
+```mermaid
+flowchart LR
+  RASFF[(RASFF Excel)]
+  Comtrade[(Comtrade merged CSV)]
+  FAOSTAT[(FAOSTAT QCL FBS<br/>+ FishStat)]
+
+  RASFF -->|R, S, t_r| S4[§4 Hazard<br/>HIS HDI DGI]
+  RASFF -->|affected roles| MP[market_presence<br/>confirmed / detected / informational]
+  Comtrade -->|M, X, V| S2[§2 Dependency<br/>IDR OCS BDI HHI SCI SSR]
+  Comtrade -->|M, V history| S5[§5 Trade flow<br/>z_uv z_volume MTD ΔHHI ΔOCS]
+  Comtrade -->|netWgt by HS-2| Mbar["§6.4 m̄(c)"]
+  FAOSTAT -->|P, ΔS| S2
+  FAOSTAT -->|D, Pop| S3[§3 Consumption<br/>PCC CRS DIS]
+
+  S2 --> S6[§6 Network<br/>ACEP ORPS edges]
+  S4 --> S6
+  S3 --> S6
+  MP --> S6
+
+  S2 --> S7[§7 Composite CVS]
+  S3 --> S7
+  S4 --> S7
+  S5 -->|"z_uv → PAS"| S7
+  S2 -->|"1 − OCS → SCCS"| S7
+```
+
+### 2. Startup orchestration (the boot sequence in `_load_data`)
 
 ```mermaid
 flowchart TD
-  RASFF[RASFF Excel] --> Lanes[Corridor keys c,i,j + market_presence]
-  Lanes --> H4["§4 HIS HDI counts (alpha from ScoringConfig)"]
-  Comtrade[Comtrade merged CSV] --> S2[§2 DS IDR OCS HHI SCI]
-  Comtrade --> Mbar["§6.4 m̄(c) HS-2 chapter medians"]
-  FAOSTAT[FAOSTAT QCL FBS FishStat] --> S2
-  FAOSTAT --> S3[§3 PCC CRS DIS lookups]
-  H4 --> Join[Corridor metric records]
-  S2 --> Join
-  S3 --> Join
-  Join --> DGI[§4.5 DGI]
-  Join --> SCCS["§7 SCCS = 1 - OCS"]
-  Comtrade --> PAS["§7 PAS = min(|z_UV|, 3)"]
-  PAS --> Join
-  SCCS --> Join
-  DGI --> S7["§7 normalise + masked-hybrid CVS"]
-  S7 --> DQ[Data quality labels]
-  DQ --> API[List and profile endpoints]
-  Comtrade --> S5[§5 on demand full profile]
-  Mbar --> Phat["§6.4 P̂ on demand /hazard-probability"]
+  Start([API boot]) --> A[Load Comtrade merged CSV<br/>→ state.trade_df]
+  A --> B["Estimate m̄(c) HS-2 chapter medians<br/>→ state.avg_shipment_lookup"]
+  B --> C[Load RASFF Excel + extract corridors]
+  C --> D[Build RasffNotification objects<br/>aggregate destination_roles per corridor]
+  D --> E[Classify market_presence per corridor]
+  E --> F["§4 compute_corridor_hazard per lane<br/>HIS HDI counts severity<br/>α = ScoringConfig.alpha_decay"]
+  F --> G[Load FAOSTAT QCL/FBS + FishStat<br/>→ state.faostat]
+  G --> H["§2 run_dependency_pipeline<br/>DS' IDR OCS BDI HHI SCI"]
+  H --> I["§3 compute_consumption_lookups<br/>cache pcc / crs / dis on state"]
+  I --> J["Per-corridor stamp:<br/>pcc · crs · dis · sccs = 1 − OCS"]
+  J --> K["§4.5 compute_dgi_for_corridor<br/>where bilateral &amp; total imports &gt; 0"]
+  K --> L["§7 stamp PAS = min(|z_uv|, 3)<br/>one batch pass over trade_df"]
+  L --> M["§7 normalise + masked-hybrid CVS<br/>run_scoring_pipeline"]
+  M --> N[Attach data_quality labels +<br/>sci_unavailable_reason]
+  N --> Ready([state.corridor_metrics ready])
+```
+
+### 3. Request-time computation (cached vs lazy per endpoint)
+
+```mermaid
+flowchart TD
+  Req([Incoming request]) --> Kind{Endpoint family}
+
+  Kind -->|"/corridors (list / top)"| List[Filter + sort cached<br/>state.corridor_metrics]
+  Kind -->|"/corridors/{...}/full"| Full[Pull cached metric<br/>+ §5 trade-flow per-call]
+  Kind -->|"/corridors/{...}/trade-anomalies"| TF["§5 from trade_df<br/>z_uv z_volume MTD ΔHHI ΔOCS"]
+  Kind -->|"/corridors/{...}/hazard-probability"| Phat["§6.4 P̂(hazard | trade)<br/>cached count ÷ M/m̄(c)<br/>gate: notification_count ≥ 10"]
+  Kind -->|"/countries/{m49}/acep"| ACEP["Build exposure network<br/>from state.corridor_metrics<br/>→ compute_acep_by_role"]
+  Kind -->|"/countries/{m49}/orps-by-commodity"| ORPS["Same network<br/>→ compute_orps_by_role per HS"]
+  Kind -->|"PUT /scoring/config"| Cfg["Update state.scoring_config<br/>rebuild hazard if α changed<br/>re-run run_scoring_pipeline"]
 ```
 
 ---
