@@ -384,10 +384,17 @@ class NetworkEngine:
         trade_weight: float,
         hazard_weight: float,
         dep_weight: float,
+        role: str | None = None,
     ):
+        """Add a directed (origin → destination) trade edge.
+
+        ``role`` is the RASFF market-presence classification — one of
+        ``"confirmed"``, ``"detected"``, ``"informational"``, or
+        ``"unknown"`` (default). Drives the role filter on ACEP/ORPS.
+        """
         self._network.add_trade_edge(
             origin_m49, dest_m49, commodity_hs,
-            trade_weight, hazard_weight, dep_weight,
+            trade_weight, hazard_weight, dep_weight, role,
         )
 
     def compute_orps(
@@ -396,14 +403,37 @@ class NetworkEngine:
         commodity_hs: str,
         pcc_values: dict[int, float],
     ) -> float:
+        """ORPS over confirmed edges only (Sec. 6.2)."""
         return network.compute_orps(self._network, origin_m49, commodity_hs, pcc_values)
+
+    def compute_orps_by_role(
+        self,
+        origin_m49: int,
+        commodity_hs: str,
+        pcc_values: dict[int, float],
+    ) -> dict[str, float]:
+        """ORPS split across the four EdgeRole buckets."""
+        return network.compute_orps_by_role(
+            self._network, origin_m49, commodity_hs, pcc_values
+        )
 
     def compute_acep(
         self,
         destination_m49: int,
         crs_by_commodity: dict[str, float],
     ) -> float:
+        """ACEP over confirmed edges only (Sec. 6.3)."""
         return network.compute_acep(self._network, destination_m49, crs_by_commodity)
+
+    def compute_acep_by_role(
+        self,
+        destination_m49: int,
+        crs_by_commodity: dict[str, float],
+    ) -> dict[str, float]:
+        """ACEP split across the four EdgeRole buckets."""
+        return network.compute_acep_by_role(
+            self._network, destination_m49, crs_by_commodity
+        )
 
     @property
     def node_count(self) -> int:

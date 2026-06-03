@@ -118,6 +118,8 @@ export default function CountrySnapshot() {
     orps?.commodities.slice(0, 12).map((r) => ({
       hs: r.commodity_hs,
       orps: r.orps,
+      pccReal: r.pcc_real_count ?? 0,
+      pccProxy: r.pcc_proxy_count ?? 0,
     })) ?? [];
 
   return (
@@ -163,6 +165,25 @@ export default function CountrySnapshot() {
           }
           icon={Shield}
           color="bg-purple-500"
+          footer={
+            acep && (acep.crs_resolved_count != null || acep.bdi_missing_inbound != null) ? (
+              <span title={
+                acep.crs_missing_hs && acep.crs_missing_hs.length > 0
+                  ? `CRS missing for HS: ${acep.crs_missing_hs.join(", ")}${
+                      (acep.crs_missing_count ?? 0) > acep.crs_missing_hs.length
+                        ? ` (+${(acep.crs_missing_count ?? 0) - acep.crs_missing_hs.length} more)`
+                        : ""
+                    }`
+                  : "All inbound HS codes resolved a real CRS value."
+              }>
+                CRS resolved {acep.crs_resolved_count ?? 0}/
+                {(acep.crs_resolved_count ?? 0) + (acep.crs_missing_count ?? 0)}
+                {(acep.bdi_missing_inbound ?? 0) > 0
+                  ? ` · BDI gap on ${acep.bdi_missing_inbound} lanes`
+                  : ""}
+              </span>
+            ) : null
+          }
         />
         <MetricCard
           label="Inbound corridors"
@@ -188,10 +209,9 @@ export default function CountrySnapshot() {
           </h2>
           <p className="mb-3 text-xs text-slate-600">
             Blueprint Sec. 6.2 — how much hazard-weighted exposure this origin
-            sends to EU destinations per product. Per-capita consumption is
-            proxied to 1.0 in each destination until FAOSTAT food balance
-            sheets are wired in; use for relative ranking, not absolute
-            thresholds.
+            sends to EU destinations per product. PCC comes from the Section 3
+            consumption lookup; destinations without FAOSTAT coverage fall back
+            to PCC = 1.0. Hover a bar to see the real/proxy split for that HS.
           </p>
           <ResponsiveContainer width="100%" height={Math.max(160, orpsChartData.length * 22)}>
             <BarChart data={orpsChartData} layout="vertical" margin={{ left: 16, right: 16 }}>
@@ -203,7 +223,18 @@ export default function CountrySnapshot() {
                 tick={{ fontSize: 10, fontFamily: "monospace" }}
                 width={80}
               />
-              <Tooltip formatter={(v) => Number(v).toFixed(4)} />
+              <Tooltip
+                formatter={(v, _name, p) => {
+                  const datum = (p?.payload ?? {}) as { pccReal?: number; pccProxy?: number };
+                  const real = datum.pccReal ?? 0;
+                  const proxy = datum.pccProxy ?? 0;
+                  const num = typeof v === "number" ? v : Number(v);
+                  return [
+                    `${num.toFixed(4)}  (PCC: ${real} real / ${proxy} proxy)`,
+                    "ORPS",
+                  ];
+                }}
+              />
               <Bar dataKey="orps" fill="#8b5cf6" />
             </BarChart>
           </ResponsiveContainer>

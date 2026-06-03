@@ -59,6 +59,7 @@ class AppState:
     coverage: dict = field(default_factory=dict)
     # Section 3 lookups by (hs, destination_m49) -> value. Populated alongside dependency.
     pcc_lookup: dict[tuple[str, int], float] = field(default_factory=dict)
+    crs_lookup: dict[tuple[str, int], float] = field(default_factory=dict)
     dis_lookup: dict[tuple[str, int], float] = field(default_factory=dict)
 
 
@@ -182,8 +183,9 @@ def _enrich_dependency_consumption(state: AppState) -> None:
     pcc_lookup, crs_lookup, dis_lookup = compute_consumption_lookups(
         state.faostat, trade_period or None
     )
-    # Cache lookups on state so the network / ORPS path can read them too.
+    # Cache lookups on state so the network / ORPS / ACEP path can read them too.
     state.pcc_lookup = pcc_lookup
+    state.crs_lookup = crs_lookup
     state.dis_lookup = dis_lookup
 
     enriched = 0

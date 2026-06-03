@@ -77,7 +77,9 @@ fn defensefood_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let net = PyModule::new(m.py(), "network")?;
     net.add_class::<network::graph::ExposureNetwork>()?;
     net.add_function(wrap_pyfunction!(network::orps::compute_orps, &net)?)?;
+    net.add_function(wrap_pyfunction!(network::orps::compute_orps_by_role, &net)?)?;
     net.add_function(wrap_pyfunction!(network::acep::compute_acep, &net)?)?;
+    net.add_function(wrap_pyfunction!(network::acep::compute_acep_by_role, &net)?)?;
     net.add_function(wrap_pyfunction!(network::probability::compute_hazard_probability, &net)?)?;
     m.add_submodule(&net)?;
 

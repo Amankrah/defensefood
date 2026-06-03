@@ -85,10 +85,12 @@ def get_orps_by_commodity(
 
     net = build_exposure_network(state.corridor_metrics)
     rows = []
-    proxy_used = False
+    proxy_used_any = False
     for hs in hs_codes:
         hs_norm = normalize_hs(hs)
         pcc: dict[int, float] = {}
+        pcc_real = 0
+        pcc_proxy = 0
         for c in state.corridor_metrics:
             if (
                 c.get("origin_m49") == m49
@@ -99,17 +101,26 @@ def get_orps_by_commodity(
                 real = state.pcc_lookup.get((hs_norm, dest)) if hs_norm else None
                 if real is not None:
                     pcc[dest] = real
+                    pcc_real += 1
                 else:
                     pcc[dest] = 1.0
-                    proxy_used = True
+                    pcc_proxy += 1
+                    proxy_used_any = True
         orps = net.compute_orps(m49, hs, pcc)
-        rows.append({"commodity_hs": hs, "orps": orps})
+        orps_by_role = net.compute_orps_by_role(m49, hs, pcc)
+        rows.append({
+            "commodity_hs": hs,
+            "orps": orps,
+            "orps_by_role": orps_by_role,
+            "pcc_real_count": pcc_real,
+            "pcc_proxy_count": pcc_proxy,
+        })
 
     rows.sort(key=lambda r: r["orps"], reverse=True)
     return {
         "m49": m49,
         "name": name,
-        "pcc_proxy": proxy_used,
+        "pcc_proxy": proxy_used_any,
         "commodities": rows,
     }
 
@@ -142,23 +153,63 @@ def get_country_acep(
 ):
     """Compute ACEP (Attention Country Exposure Profile) for a destination.
 
-    ACEP = sum(BDI * HIS * CRS) across all inbound corridors.
-    Uses CRS=1.0 proxy until FAOSTAT data is integrated.
+    ACEP = sum(BDI * HIS * CRS) across all inbound corridors (Sec. 6.3 Eq. 34).
+
+    CRS comes from the Section 3 lookup (state.crs_lookup) keyed by
+    (normalized_hs, destination_m49). HS codes without a CRS value contribute
+    0 (rather than the prior 1.0 proxy, which silently inflated ACEP).
+
+    Surfaces ``crs_missing_hs`` and ``crs_resolved_hs`` so the dashboard can
+    show how many commodities backed the score.
     """
+    from defensefood.ingestion.hs_codes import normalize_hs
+    from defensefood.pipeline.network_pipeline import count_missing_bdi_edges
+
     name = get_country_name(m49)
     net = build_exposure_network(state.corridor_metrics)
 
-    # CRS=1.0 proxy: ACEP becomes sum(BDI * HIS) per inbound edge
-    crs_proxy = {}
+    # Build the CRS map for this destination from the cached lookup; track
+    # which HS codes resolved versus had to fall back to 0.
+    crs_by_commodity: dict[str, float] = {}
+    resolved: list[str] = []
+    missing: list[str] = []
+    seen: set[str] = set()
     for c in state.corridor_metrics:
-        hs = c.get("commodity_hs", "")
-        if hs:
-            crs_proxy[hs] = 1.0
+        if c.get("destination_m49") != m49:
+            continue
+        hs = c.get("commodity_hs") or ""
+        if not hs or hs in seen:
+            continue
+        seen.add(hs)
+        hs_norm = normalize_hs(hs)
+        crs = state.crs_lookup.get((hs_norm, m49))
+        if crs is not None:
+            crs_by_commodity[hs] = float(crs)
+            resolved.append(hs)
+        else:
+            crs_by_commodity[hs] = 0.0
+            missing.append(hs)
 
-    acep = net.compute_acep(m49, crs_proxy)
+    acep = net.compute_acep(m49, crs_by_commodity)
+    acep_by_role = net.compute_acep_by_role(m49, crs_by_commodity)
+
+    # Diagnostic: how many inbound corridors had no BDI? Those contribute 0
+    # under the new Slice-B math; we surface the count so users can tell.
+    bdi_missing = count_missing_bdi_edges(
+        state.corridor_metrics, destination_m49=m49
+    )
 
     return {
         "m49": m49,
         "name": name or "Unknown",
+        # acep === acep_by_role["confirmed"] — kept as the top-level
+        # planner-facing number; Slice A's role split lives alongside it.
         "acep": acep,
+        "acep_by_role": acep_by_role,
+        "crs_resolved_count": len(resolved),
+        "crs_missing_count": len(missing),
+        # Cap the missing list so the response stays small; the count is
+        # authoritative.
+        "crs_missing_hs": sorted(missing)[:10],
+        "bdi_missing_inbound": bdi_missing,
     }

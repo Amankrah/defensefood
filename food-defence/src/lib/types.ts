@@ -244,7 +244,18 @@ export interface CountryExposure {
 export interface CountryAcep {
   m49: number;
   name: string;
+  /** ACEP over confirmed edges only (planner-facing default). */
   acep: number;
+  /** Role-split ACEP buckets — same edges, partitioned by market-presence. */
+  acep_by_role?: Record<MarketPresence, number>;
+  /** Number of inbound HS codes whose CRS resolved from the Section 3 lookup. */
+  crs_resolved_count?: number;
+  /** Number of inbound HS codes that contributed 0 because CRS was unavailable. */
+  crs_missing_count?: number;
+  /** Sample of HS codes missing CRS (capped at 10 for payload size). */
+  crs_missing_hs?: string[];
+  /** Number of inbound corridors with no BDI (contributed 0 to the ACEP sum). */
+  bdi_missing_inbound?: number;
 }
 
 /** ORPS (Sec. 6.2) per commodity for an origin; PCC proxied until consumption data is wired. */
@@ -252,7 +263,14 @@ export interface CountryOrpsByCommodity {
   m49: number;
   name: string;
   pcc_proxy: boolean;
-  commodities: { commodity_hs: string; orps: number }[];
+  commodities: {
+    commodity_hs: string;
+    orps: number;
+    /** Destinations whose PCC came from FAOSTAT (real consumption). */
+    pcc_real_count?: number;
+    /** Destinations that fell back to PCC=1.0 (no consumption data). */
+    pcc_proxy_count?: number;
+  }[];
 }
 
 // ── Scoring ──
