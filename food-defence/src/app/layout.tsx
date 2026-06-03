@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "DefenseFood | Food fraud risk dashboard",
+  title: "DefenseFood | Food fraud vulnerability scoring for EU trade corridors",
   description:
-    "Prioritise EU food safety and trade corridors: RASFF-linked hazard signals, dependency context, and clear scores for inspections and diagnostics.",
+    "Ranks every commodity, destination, origin lane on combined vulnerability. Built on the EU Food Fraud Vulnerability v1.0 framework, with RASFF hazard alerts, Comtrade bilateral trade, and FAOSTAT food balance sheets.",
 };
 
 export default function RootLayout({
