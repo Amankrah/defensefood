@@ -82,14 +82,22 @@ export function interpretSci(sci: number | null | undefined): Verdict {
   return { verdict: "Negligible exposure on this lane.", band: "low" };
 }
 
-/** Composite Vulnerability Score (CVS), 0–1. */
+/**
+ * Composite Vulnerability Score (CVS), 0–1.
+ *
+ * Thresholds re-anchored on the post-Slice-E2 live distribution
+ * (cvs_distribution_postE2.json): P75 ≈ 0.22, P90 ≈ 0.30, P95 ≈ 0.35.
+ * The theoretical max is 1.0 but no real corridor approaches it; bands
+ * follow the empirical quantiles so the priority queue reflects the
+ * actual corpus, not a fictional full-scale.
+ */
 export function interpretCvs(cvs: number | null | undefined): Verdict {
   if (!isNum(cvs)) return NA;
-  if (cvs >= 0.75)
+  if (cvs >= 0.35)
     return { verdict: "Top priority — sample and review this period.", band: "high" };
-  if (cvs >= 0.5)
+  if (cvs >= 0.3)
     return { verdict: "High priority — schedule a targeted check.", band: "high" };
-  if (cvs >= 0.3) return { verdict: "Watchlist — monitor for changes.", band: "med" };
+  if (cvs >= 0.22) return { verdict: "Watchlist — monitor for changes.", band: "med" };
   return { verdict: "Low priority — no immediate action.", band: "low" };
 }
 

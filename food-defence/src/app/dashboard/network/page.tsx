@@ -204,6 +204,12 @@ export default function ExposureNetworkPage() {
   const [loading, setLoading] = useState(true);
   /** Minimum relative link strength 0–100 (HIS / max HIS in view). Hides weaker links to reduce clutter. */
   const [linkFloorPct, setLinkFloorPct] = useState(0);
+  /**
+   * Show informational lanes (attention-only). Default off so the headline
+   * graph matches the planner-facing corridor list; researchers flip it on
+   * to inspect the full RASFF population.
+   */
+  const [showInformational, setShowInformational] = useState(false);
   const [edgeHint, setEdgeHint] = useState<string | null>(null);
   /** Lane keys (`${origin_m49}-${dest_m49}`) for the current top-priority queue. */
   const [priorityPairs, setPriorityPairs] = useState<Set<string>>(new Set());
@@ -264,9 +270,15 @@ export default function ExposureNetworkPage() {
 
   const visibleEdges = useMemo(() => {
     const floor = linkFloorPct / 100;
-    if (floor <= 0) return allEdges;
-    return allEdges.filter((e) => (e.data?.relHis ?? 0) >= floor);
-  }, [allEdges, linkFloorPct]);
+    let out = allEdges;
+    if (!showInformational) {
+      out = out.filter((e) => e.data?.presence !== "informational");
+    }
+    if (floor > 0) {
+      out = out.filter((e) => (e.data?.relHis ?? 0) >= floor);
+    }
+    return out;
+  }, [allEdges, linkFloorPct, showInformational]);
 
   const nodes = useMemo(
     () => (graph ? buildFlowNodes(graph) : []),
@@ -369,7 +381,7 @@ export default function ExposureNetworkPage() {
           </span>
         </div>
         <p className="mt-1 font-medium text-slate-700">Market presence</p>
-        <div className="flex flex-wrap gap-x-4 gap-y-1">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span className="flex items-center gap-1.5" title="Per RASFF: product is or may be on this market (distribution / follow-up)">
             <span className="h-0.5 w-5 bg-rose-500" />
             Confirmed (drives ACEP/ORPS)
@@ -385,6 +397,15 @@ export default function ExposureNetworkPage() {
             />
             Informational (excluded from ACEP)
           </span>
+          <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-slate-600">
+            <input
+              type="checkbox"
+              checked={showInformational}
+              onChange={(e) => setShowInformational(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            Show informational lanes
+          </label>
         </div>
       </div>
 

@@ -339,12 +339,15 @@ def get_corridor_full_profile(
         "cvs_mode": base.get("cvs_mode"),
         "cvs_hazard_only": base.get("cvs_hazard_only"),
         "cvs_missing_inputs": base.get("cvs_missing_inputs", []),
+        "cvs_amplifier_terms": base.get("cvs_amplifier_terms", []),
         "sci_unavailable_reason": base.get("sci_unavailable_reason"),
         "sci_unavailable_label": base.get("sci_unavailable_label"),
         "data_quality": base.get("data_quality"),
         "sci_norm": base.get("sci_norm"),
         "his_norm": base.get("his_norm"),
         "crs_norm": base.get("crs_norm"),
+        "pas_norm": base.get("pas_norm"),
+        "sccs_norm": base.get("sccs_norm"),
     }
 
     if interpret:

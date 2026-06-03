@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { ChevronDown, ChevronRight, Calculator } from "lucide-react";
 import FormulaBlock from "@/components/shared/FormulaBlock";
 import { fmt, fmtInt } from "@/lib/utils";
@@ -23,8 +22,6 @@ interface LaneWalkthroughProps {
  * Collapsed by default — non-experts can ignore it; researchers can expand.
  */
 export default function LaneWalkthrough({ dependency, cvs }: LaneWalkthroughProps) {
-  const [open, setOpen] = useState(false);
-
   if (!dependency || "error" in dependency) {
     return null;
   }
@@ -42,31 +39,33 @@ export default function LaneWalkthrough({ dependency, cvs }: LaneWalkthroughProp
   const dsPrime = dep.ds_prime ?? 0;
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between px-5 py-3 text-left"
-        aria-expanded={open}
-      >
+    <details className="group rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <summary className="flex w-full cursor-pointer list-none items-center justify-between px-5 py-3 text-left [&::-webkit-details-marker]:hidden">
         <div className="flex items-center gap-2">
-          {open ? (
-            <ChevronDown size={16} className="text-slate-500" aria-hidden />
-          ) : (
-            <ChevronRight size={16} className="text-slate-500" aria-hidden />
-          )}
+          <ChevronRight
+            size={16}
+            className="text-slate-500 group-open:hidden"
+            aria-hidden
+          />
+          <ChevronDown
+            size={16}
+            className="hidden text-slate-500 group-open:block"
+            aria-hidden
+          />
           <Calculator size={15} className="text-blue-600" aria-hidden />
           <span className="text-sm font-semibold text-slate-900">
             How we computed this score
           </span>
         </div>
-        <span className="text-[11px] text-slate-500">
-          {open ? "Hide step-by-step math" : "Show step-by-step math"}
+        <span className="text-[11px] text-slate-500 group-open:hidden">
+          Show step-by-step math
         </span>
-      </button>
+        <span className="hidden text-[11px] text-slate-500 group-open:inline">
+          Hide step-by-step math
+        </span>
+      </summary>
 
-      {open && (
-        <div className="space-y-4 border-t border-slate-100 px-5 py-4">
+      <div className="space-y-4 border-t border-slate-100 px-5 py-4">
           <p className="text-[11px] text-slate-600">
             Each step below uses this lane&apos;s actual values. The formulas
             match Section&nbsp;2 of the blueprint.
@@ -170,8 +169,7 @@ export default function LaneWalkthrough({ dependency, cvs }: LaneWalkthroughProp
             </Step>
           )}
         </div>
-      )}
-    </section>
+    </details>
   );
 }
 

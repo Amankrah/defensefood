@@ -141,6 +141,7 @@ def _load_data(state: AppState) -> None:
             metrics = compute_corridor_hazard(
                 state.notifications, c.commodity_hs, c.destination_m49,
                 c.origin_m49, state.current_period,
+                alpha=state.scoring_config.alpha_decay,
                 hazard_category_map=hazard_category_map,
             )
             metrics["commodity_hs"] = c.commodity_hs
@@ -221,6 +222,13 @@ def _enrich_dependency_consumption(state: AppState) -> None:
         if dis is not None:
             m["dis"] = dis
 
+        # Section 7 amplifier — SCCS = 1 - OCS (percentile-ranked downstream).
+        # Reads as "this single origin is a small slice of the destination's
+        # import mix → more middlemen, more complexity in the supply chain".
+        ocs = m.get("ocs")
+        if ocs is not None:
+            m["sccs"] = 1.0 - float(ocs)
+
     # ── Section 4.5 Detection Gap Indicator ────────────────────────────────
     # DGI = trade_share − notification_share. Computed per corridor where the
     # destination has both bilateral trade and at least one origin-attributable
@@ -245,14 +253,40 @@ def _enrich_dependency_consumption(state: AppState) -> None:
                 m["dgi"] = dgi
                 dgi_count += 1
 
+    # ── Section 7 PAS amplifier — Price Anomaly Score ─────────────────────
+    # PAS = min(|z_uv|, 3.0); percentile-ranked across the corpus when the
+    # scoring pipeline normalises. Built once from a single pass over the
+    # trade DataFrame at the same year used for dependency enrichment.
+    pas_count = 0
+    if trade_period is not None and state.trade_df is not None and not state.trade_df.empty:
+        from defensefood.pipeline.trade_flow_pipeline import (
+            compute_unit_value_anomalies_for_all_corridors,
+        )
+        z_uv_lookup = compute_unit_value_anomalies_for_all_corridors(
+            state.trade_df, int(trade_period),
+        )
+        for m in state.corridor_metrics:
+            key = (
+                str(m.get("commodity_hs", "")),
+                int(m.get("destination_m49") or 0),
+                int(m.get("origin_m49") or 0),
+            )
+            z = z_uv_lookup.get(key)
+            if z is None:
+                continue
+            m["z_uv"] = z
+            m["pas"] = min(abs(z), 3.0)
+            pas_count += 1
+
     logger.info(
         "Dependency enrichment: %d/%d corridors got Section 2 metrics (period=%s, faostat=%s); "
         "Section 3 lookups: %d PCC keys, %d CRS keys, %d DIS keys; "
-        "Section 4.5 DGI populated for %d corridors",
+        "Section 4.5 DGI populated for %d corridors; "
+        "Section 7 PAS populated for %d corridors",
         enriched, len(state.corridor_metrics), trade_period,
         bool(state.faostat and state.faostat.available),
         len(pcc_lookup), len(crs_lookup), len(dis_lookup),
-        dgi_count,
+        dgi_count, pas_count,
     )
 
 

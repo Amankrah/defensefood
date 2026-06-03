@@ -51,6 +51,57 @@ def compute_unit_value_anomalies(
     return grouped[["partnerCode", "unit_value", "z_uv"]]
 
 
+def compute_unit_value_anomalies_for_all_corridors(
+    trade_df: pd.DataFrame,
+    period: int,
+) -> dict[tuple[str, int, int], float]:
+    """Build a (commodity_hs, destination_m49, origin_m49) → z_uv lookup.
+
+    One pass over the trade DataFrame at startup, so the per-corridor PAS
+    amplifier in Section 7 doesn't have to recompute z-scores per request.
+    Lanes whose unit-value z-score is undefined (single-origin destination,
+    zero weight, etc.) are absent from the lookup; the caller should treat
+    missing keys as `None`.
+    """
+    if trade_df is None or trade_df.empty:
+        return {}
+
+    mask = (
+        (trade_df["period"].astype(int) == period)
+        & (trade_df["flowCode"].astype(str) == "M")
+    )
+    imports = trade_df[mask]
+    if imports.empty:
+        return {}
+
+    out: dict[tuple[str, int, int], float] = {}
+    # Group once per (commodity, destination) and run the z-score across its
+    # origins. This mirrors compute_unit_value_anomalies but stays vectorised
+    # over the full corpus.
+    for (hs, dest), group in imports.groupby([
+        imports["cmdCode"].astype(str),
+        imports["reporterCode"].astype(int),
+    ]):
+        per_origin = group.groupby("partnerCode").agg(
+            value=("primaryValue", "sum"),
+            weight=("netWgt", "sum"),
+        ).reset_index()
+        values = per_origin["value"].values.astype(float)
+        weights = per_origin["weight"].values.astype(float)
+        if len(values) < 2:
+            # z-score needs at least two origins to be meaningful.
+            continue
+        zscores = TradeFlowEngine.unit_value_zscores(values, weights)
+        for partner_code, z in zip(per_origin["partnerCode"].astype(int), zscores):
+            if z is None:
+                continue
+            zf = float(z)
+            if zf != zf:  # NaN
+                continue
+            out[(hs, int(dest), int(partner_code))] = zf
+    return out
+
+
 def compute_mirror_discrepancy(
     trade_df: pd.DataFrame,
     commodity_hs: str,

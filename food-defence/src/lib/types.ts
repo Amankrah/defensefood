@@ -88,9 +88,18 @@ export interface CorridorMetric {
   cvs_hazard_only?: number | null;
   /** Which normalised inputs are missing (e.g. ["crs_norm"]). */
   cvs_missing_inputs?: string[];
+  /** Amplifier terms that contributed to this lane's CVS (Slice E1). */
+  cvs_amplifier_terms?: string[];
   sci_norm?: number | null;
   his_norm?: number | null;
   crs_norm?: number | null;
+  /** Section 7 amplifier terms (Slice E2). */
+  pas?: number | null;
+  pas_norm?: number | null;
+  sccs?: number | null;
+  sccs_norm?: number | null;
+  /** Bilateral unit-value z-score (Section 5.1; populated alongside PAS). */
+  z_uv?: number | null;
   /** Why SCI/CVS may be absent (machine-readable). */
   sci_unavailable_reason?: SciUnavailableReason | null;
   /** Human-readable explanation for UI tooltips. */
@@ -187,6 +196,9 @@ export interface CorridorProfile {
   sci_norm?: number | null;
   his_norm?: number | null;
   crs_norm?: number | null;
+  pas_norm?: number | null;
+  sccs_norm?: number | null;
+  cvs_amplifier_terms?: string[];
   /** Server-side verdicts when /full was requested with ?interpret=true. */
   interpretations?: Record<string, MetricInterpretation>;
 }

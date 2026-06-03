@@ -676,7 +676,13 @@ METHODOLOGY: list[dict[str, Any]] = [
         "inputs": ["BDI", "HIS", "CRS"],
         "definition": (
             "Country-level: sum of hazard-and-dependency-weighted exposure "
-            "across every inbound lane reaching this country."
+            "across every inbound lane reaching this country.\n\n"
+            "Role-aware aggregation: Pan et al. 2025 (Discover Food) build "
+            "role-aware directed RASFF networks. Following that approach, the "
+            "headline ACEP sums only confirmed-market lanes (distribution or "
+            "followUp). The API also returns ``acep_by_role`` with the "
+            "detected and informational buckets so researchers can see the "
+            "full picture without conflating market-presence semantics."
         ),
         "scale": [
             {"min": 0.00, "max": 0.10, "label": "Negligible inbound exposure", "band": _LOW,
@@ -691,8 +697,12 @@ METHODOLOGY: list[dict[str, Any]] = [
         "when_matters": (
             "When ranking destinations by aggregate inbound exposure."
         ),
-        "related": ["sci", "cvs"],
-        "source": "defensefood_core::network::compute_acep",
+        "related": ["sci", "cvs", "corridor_membership"],
+        "source": (
+            "defensefood_core::network::compute_acep · "
+            "Pan et al., 'Role-aware directed networks in food-fraud RASFF data', "
+            "Discover Food 2025"
+        ),
     },
     {
         "key": "orps",
@@ -705,7 +715,11 @@ METHODOLOGY: list[dict[str, Any]] = [
         "inputs": ["BDI", "HIS", "PCC"],
         "definition": (
             "How much hazard-weighted exposure this origin sends to EU destinations "
-            "for a commodity. Used to rank origin-country impact."
+            "for a commodity. Used to rank origin-country impact.\n\n"
+            "Role-aware aggregation: the headline ORPS sums only confirmed-market "
+            "destinations (distribution or followUp). The API also returns "
+            "``orps_by_role`` so the detected and informational buckets stay "
+            "visible without inflating the planner-facing number."
         ),
         "scale": [
             {"min": 0.00, "max": 0.10, "label": "Low outbound impact", "band": _LOW,
@@ -718,8 +732,83 @@ METHODOLOGY: list[dict[str, Any]] = [
         "when_matters": (
             "When ranking origins by outbound exposure they send to EU destinations."
         ),
-        "related": ["his", "crs"],
-        "source": "defensefood_core::network::compute_orps",
+        "related": ["his", "crs", "corridor_membership"],
+        "source": (
+            "defensefood_core::network::compute_orps · "
+            "Pan et al., 'Role-aware directed networks in food-fraud RASFF data', "
+            "Discover Food 2025"
+        ),
+    },
+    {
+        "key": "pas",
+        "name": "Price anomaly score",
+        "abbr": "PAS",
+        "section": "7.2.3",
+        "blueprint_eq": "Eq. (41) amplifier",
+        "formula_latex": r"PAS = \mathrm{percentile}\bigl(\min(|z_{UV}|,\,3)\bigr)",
+        "formula_plain": (
+            "Magnitude of the lane's unit-value z-score (Section 5.1), clipped at "
+            "3σ and percentile-ranked across the corpus."
+        ),
+        "inputs": ["z_uv (Section 5.1)"],
+        "definition": (
+            "One of three amplifier terms in the hybrid CVS formula (Eq. 41). "
+            "High PAS means the corridor's unit value is far from the mix of its "
+            "origin peers — a classic price-substitution / dilution signal. The "
+            "raw z-score is clipped at 3σ before percentile-ranking so a single "
+            "outlier corridor doesn't pin every other lane to ~0."
+        ),
+        "scale": [
+            {"min": 0.00, "max": 0.50, "label": "Typical pricing", "band": _LOW,
+             "advice": "Unit value is close to the peer-origin mix; no price signal."},
+            {"min": 0.50, "max": 0.85, "label": "Noticeable spread", "band": _MED,
+             "advice": "Unit value sits noticeably away from peers; monitor."},
+            {"min": 0.85, "max": 1.01, "label": "Extreme pricing", "band": _HIGH,
+             "advice": "Unit value is at the high end of the corpus; investigate "
+                       "substitution / dilution / mislabelling."},
+        ],
+        "when_matters": (
+            "When you want a price-based signal to amplify the structural CVS "
+            "base — present whenever the lane has at least two origins of trade."
+        ),
+        "related": ["z_uv", "cvs", "sci"],
+        "source": "Built from defensefood_core::trade_flow::unit_value at startup.",
+    },
+    {
+        "key": "sccs",
+        "name": "Supply chain complexity score",
+        "abbr": "SCCS",
+        "section": "7.2.3",
+        "blueprint_eq": "Eq. (41) amplifier",
+        "formula_latex": r"SCCS = \mathrm{percentile}(1 - OCS)",
+        "formula_plain": (
+            "Inverse of the origin's share of the destination's import mix, "
+            "percentile-ranked across the corpus."
+        ),
+        "inputs": ["OCS (Section 2.3)"],
+        "definition": (
+            "One of three amplifier terms in the hybrid CVS formula (Eq. 41). "
+            "High SCCS means this origin contributes a small slice of the "
+            "destination's imports — i.e. the destination sources from many "
+            "places, so the supply chain has more middlemen and more places for "
+            "substitution to happen. The blueprint names SCCS as part of Eq. 41 "
+            "but does not formalise it; we use (1 − OCS) percentile because OCS "
+            "is always available for trade-covered lanes."
+        ),
+        "scale": [
+            {"min": 0.00, "max": 0.50, "label": "Direct supply", "band": _LOW,
+             "advice": "This origin is a dominant supplier; the chain is short."},
+            {"min": 0.50, "max": 0.85, "label": "Diversified chain", "band": _MED,
+             "advice": "Origin shares space with several peers; more handoffs likely."},
+            {"min": 0.85, "max": 1.01, "label": "Many-hop chain", "band": _HIGH,
+             "advice": "Origin is one of many small suppliers; high complexity."},
+        ],
+        "when_matters": (
+            "When you want a supply-chain-complexity signal to amplify the "
+            "structural CVS base — present whenever OCS is available."
+        ),
+        "related": ["ocs", "cvs", "hhi"],
+        "source": "Derived from defensefood_core::dependency::compute_ocs at startup.",
     },
     {
         "key": "hazard_probability",
@@ -784,26 +873,32 @@ METHODOLOGY: list[dict[str, Any]] = [
             "PAS (price)", "SCCS (chain)",
         ],
         "definition": (
-            "Hybrid composite priority score in 0-1. Structural base (SCI × CRS) "
-            "times a hazard-and-trade amplifier. Falls back to SCI × HIS when CRS "
-            "is unavailable."
+            "Hybrid composite priority score in [0, 1]. Structural base "
+            "(SCI × CRS) times a hazard-and-trade amplifier (HIS + PAS + SCCS). "
+            "Amplifier terms that are absent for a lane drop out of BOTH the "
+            "numerator and the divisor (Slice E1, June 2026) so full-data and "
+            "partial-data corridors share the same [0, 1] scale; missing CRS "
+            "uses the neutral 0.5 (median percentile) fallback rather than 1.0. "
+            "Scale bands re-anchored June 2026 on the live distribution "
+            "(cvs_distribution_postE2.json): P75≈0.22, P90≈0.30, P95≈0.35. "
+            "Theoretical max is 1.0 but no real corridor approaches it."
         ),
         "scale": [
-            {"min": 0.00, "max": 0.30, "label": "Low priority", "band": _LOW,
+            {"min": 0.00, "max": 0.22, "label": "Low priority", "band": _LOW,
              "advice": "No immediate action required."},
-            {"min": 0.30, "max": 0.50, "label": "Watchlist", "band": _MED,
+            {"min": 0.22, "max": 0.30, "label": "Watchlist", "band": _MED,
              "advice": "Monitor for changes in alert pattern or supplier mix."},
-            {"min": 0.50, "max": 0.75, "label": "High priority", "band": _HIGH,
+            {"min": 0.30, "max": 0.35, "label": "High priority", "band": _HIGH,
              "advice": "Schedule a targeted check this period."},
-            {"min": 0.75, "max": 1.01, "label": "Top priority", "band": _HIGH,
+            {"min": 0.35, "max": 1.01, "label": "Top priority", "band": _HIGH,
              "advice": "Sample and review this period — strong combined signal."},
         ],
         "when_matters": (
             "When ranking lanes for inspection and sampling priority — the "
             "headline number on the Today page."
         ),
-        "related": ["sci", "his", "crs"],
-        "source": "defensefood_core::scoring::score_hybrid",
+        "related": ["sci", "his", "crs", "pas", "sccs"],
+        "source": "defensefood_core::scoring::score_hybrid (Slice E1 masking in scoring_pipeline.py)",
     },
     # ── Methodology disclosure: corridor membership semantics ───────────
     # Not a metric — a first-class explanation of how RASFF roles map to

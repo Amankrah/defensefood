@@ -57,6 +57,7 @@ import VerdictBanner from "@/components/shared/VerdictBanner";
 import { RolePills } from "@/components/shared/RolePill";
 import { MarketPresenceBadge } from "@/components/shared/MarketPresenceBadge";
 import LaneWalkthrough from "@/components/shared/LaneWalkthrough";
+import CvsComposition from "@/components/shared/CvsComposition";
 
 const HAZARD_CATS: {
   key: HazardBucket;
@@ -896,6 +897,9 @@ export default function LaneReport() {
         dependency={dep && !("error" in dep) ? dep : null}
         cvs={profile.cvs}
       />
+
+      {/* CVS composition explainer — Section 7 masked-hybrid breakdown */}
+      <CvsComposition profile={profile} />
 
       {/* Step 4 — Score transparency */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

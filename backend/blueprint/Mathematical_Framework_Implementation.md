@@ -233,8 +233,7 @@ $$
 |--|--|
 | **Symbol** | `idr` |
 | **Engine** | Rust `compute_idr` |
-| **Interpretation** | $>1$ flagged `idr_gt_1` (re-export hub or missing $P$) |
-| **Interpretation** | Measures national import reliance, not bilateral |
+| **Interpretation** | Measures national import reliance (not bilateral). Values above 1 are flagged `idr_gt_1`, consistent with a re-export hub or missing production data |
 
 ---
 
@@ -275,7 +274,7 @@ $$
 | | |
 |--|--|
 | **Status** | **Live** (algebraic; tested in engine) |
-| **Interpretation** | IDR measures national import reliance; OCS measures the bilateral share within total imports |
+| **Interpretation** | BDI factorises into national import reliance (IDR) and bilateral share within imports (OCS) |
 
 ---
 
@@ -320,7 +319,7 @@ $$
 | **Symbol** | `sci` (raw), `sci_norm = SCI/2` after percentile pass |
 | **Engine** | Rust `compute_sci` / `compute_sci_normalised` |
 | **Range** | Raw SCI $\in [0,2]$; norm $\in [0,1]$ |
-| **Rationale** | The factor $(1+\mathrm{HHI})$ increases corridor criticality when a concentrated import market is dominated by a single origin |
+| **Interpretation** | The factor $(1+\mathrm{HHI})$ increases corridor criticality when a concentrated import market is dominated by a single origin |
 | **CVS role** | `sci_norm` is mandatory for full composite score |
 
 ---
@@ -357,7 +356,7 @@ $$
 |--|--|
 | **Symbol** | `crs`, then `crs_norm` at scoring |
 | **Engine** | Rust `compute_crs_batch` after ranking all commodities in country $i$ by PCC descending |
-| **Rationale** | Ranking PCC within the destination makes commodities comparable when absolute per-capita levels differ widely |
+| **Interpretation** | Ranking PCC within the destination makes commodities comparable when absolute per-capita levels differ widely |
 | **CVS role** | When present, hybrid base uses `sci_norm × crs_norm` |
 
 ---
@@ -453,7 +452,7 @@ $$
 | **$\mathcal{R}(c,i,j)$** | Notifications with matching HS, origin $j$, and $i \in$ `affected_countries` |
 | **$t, t_r$** | YYYYMM month indices (not calendar-year subtraction) |
 | **$\alpha$** | Default **0.90** (~6.6 month half-life, Eq 16) |
-| **Rationale** | HIS is left unbounded so multiple severe alerts can dominate; normalisation is applied in Section 7 |
+| **Interpretation** | HIS is left unbounded so multiple severe alerts can dominate; normalisation is applied in Section 7 |
 
 ---
 
@@ -644,7 +643,7 @@ $$
 | **API** | `GET /api/v1/countries/{m49}/orps-by-commodity` |
 | **Default sum** | **`confirmed` edges only** (distribution/followUp market presence) |
 | **Variant** | Role-split buckets (`confirmed`, `detected`, `informational`, `unknown`) |
-| **Rationale** | Summation over confirmed edges limits inflation from transit-only attention mentions |
+| **Interpretation** | Summation over confirmed edges limits inflation from transit-only attention mentions |
 
 ---
 
@@ -658,7 +657,7 @@ $$
 |--|--|
 | **API** | `GET /api/v1/countries/{m49}/acep`, exposure profile |
 | **Default sum** | **`confirmed` inbound edges only** |
-| **Rationale** | ACEP weights by CRS so inbound exposure reflects dietary importance in the destination market |
+| **Interpretation** | ACEP weights by CRS so inbound exposure reflects dietary importance in the destination market |
 
 ---
 
@@ -671,7 +670,7 @@ $$
 | | |
 |--|--|
 | **Status** | **Planned:** implemented in Rust engine, **not** exposed in API or dashboard |
-| **Rationale** | Exposure in the API awaits calibration of shipment-size priors and longer RASFF histories specified in the blueprint |
+| **Interpretation** | Exposure in the API awaits calibration of shipment-size priors and longer RASFF histories specified in the blueprint |
 
 ---
 
@@ -703,7 +702,7 @@ $$
 | | |
 |--|--|
 | **Applied to** | `sci`, `crs` (and `his` if not using log variant) |
-| **Rationale** | Percentile ranks are robust to skewed corridor score distributions |
+| **Interpretation** | Percentile ranks are robust to skewed corridor score distributions |
 
 ---
 
@@ -762,7 +761,7 @@ $$
 | **PAS / SCCS** | **Not populated:** treated as **0** (amplifier reduces to $1 + w_h HIS_{norm}$) |
 | **Fallback without CRS** | `cvs_mode = sci_his`: base $SCI_{norm}$, amplifier $1 + w_h HIS_{norm}$, same rescaling |
 | **Missing SCI or HIS** | `cvs = null`; `cvs_hazard_only = his_norm` for hazard-only display |
-| **Rationale** | The hybrid form couples a structural base with a demand gate; hazard signals amplify but cannot substitute for missing dependency |
+| **Interpretation** | The hybrid form couples a structural base with a demand gate; hazard signals amplify but cannot substitute for missing dependency |
 
 Post-scoring annotations (`sci_unavailable_reason`, `data_quality` with values such as `full` and `hazard_only`) document why SCI or CVS may be absent on list and detail views.
 

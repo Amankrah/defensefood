@@ -44,7 +44,10 @@ def normalise_corridor_scores(
         config = ScoringConfig()
 
     method = config.normalisation_method.value
-    keys_to_normalise = ["sci", "his", "crs"]
+    # `pas` and `sccs` are populated by Slice E2; until then they remain absent
+    # on every corridor and the normaliser turns them into all-NaN columns,
+    # which compute_composite_scores treats as "term not active".
+    keys_to_normalise = ["sci", "his", "crs", "pas", "sccs"]
 
     raw_arrays = {}
     for key in keys_to_normalise:
@@ -81,6 +84,13 @@ def compute_composite_scores(
     HIS, and tag `cvs_mode = "sci_his"` so the UI can distinguish it from the
     full `"sci_crs_his"` score.
 
+    Amplifier masking (Slice E1): only amplifier terms whose normalised value
+    is available contribute to BOTH the numerator and the divisor. The Rust
+    `score_hybrid` always divides by `1 + w_h + w_p + w_sc`, which caps the
+    full-data mode (PAS/SCCS missing) at 0.5 while the sci_his fallback
+    reaches 1.0 — inverting the rank order. We do the math in Python instead
+    so the divisor stays consistent with which terms are actually wired.
+
     Corridors lacking SCI or HIS still get `cvs = None` (no fabricated rank);
     `cvs_hazard_only` exposes the HIS percentile for the hazard-only view.
     """
@@ -91,8 +101,8 @@ def compute_composite_scores(
         sci_norm = c.get("sci_norm")
         crs_norm = c.get("crs_norm")
         his_norm = c.get("his_norm")
-        pas_norm = c.get("pas_norm") or 0.0
-        sccs_norm = c.get("sccs_norm") or 0.0
+        pas_norm = c.get("pas_norm")
+        sccs_norm = c.get("sccs_norm")
 
         c["cvs_hazard_only"] = his_norm if his_norm is not None else None
 
@@ -101,6 +111,7 @@ def compute_composite_scores(
         if missing_core:
             c["cvs"] = None
             c["cvs_mode"] = None
+            c["cvs_amplifier_terms"] = []
             c["cvs_missing_inputs"] = [
                 k for k, v in (("sci_norm", sci_norm), ("his_norm", his_norm))
                 if v is None
@@ -109,27 +120,41 @@ def compute_composite_scores(
 
         has_crs = crs_norm is not None
 
+        # Active amplifier terms (Slice E1): each contributes (w·v) to the
+        # numerator and w to the divisor. None terms drop out of both, keeping
+        # full-data and partial-data corridors on the same [0,1] scale.
+        amplifier_candidates = [
+            ("his", his_norm, config.w_hazard),
+            ("pas", pas_norm, config.w_price),
+            ("sccs", sccs_norm, config.w_supply_chain),
+        ]
+        active_terms = [
+            (name, val, w) for name, val, w in amplifier_candidates if val is not None
+        ]
+
         if config.composition_method == CompositionMethod.HYBRID:
-            if has_crs:
-                cvs = ScoringEngine.hybrid(
-                    sci_norm, crs_norm, his_norm, pas_norm, sccs_norm,
-                    config.w_hazard, config.w_price, config.w_supply_chain,
-                )
-            else:
-                # SCI-only base amplified by HIS: SCI*(1 + w_h*HIS)/(1 + w_h).
-                # Reuse the Rust hybrid with crs=1 and price/supply weights zeroed.
-                cvs = ScoringEngine.hybrid(
-                    sci_norm, 1.0, his_norm, 0.0, 0.0,
-                    config.w_hazard, 0.0, 0.0,
-                )
+            # CRS fallback: use 0.5 (median percentile rank) when consumption
+            # data is missing. Treating missing data as 1.0 would let sci_his
+            # lanes outrank sci_crs_his lanes with mid-range CRS — a perverse
+            # incentive where data-poor lanes win. 0.5 says "no information",
+            # neither favouring nor penalising the fallback mode.
+            crs_factor = crs_norm if has_crs else 0.5
+            base = sci_norm * crs_factor
+            amplifier = 1.0 + sum(w * v for _, v, w in active_terms)
+            max_amp = 1.0 + sum(w for _, _, w in active_terms)
+            cvs = (base * amplifier / max_amp) if max_amp > 0 else 0.0
+            c["cvs_amplifier_terms"] = [name for name, _, _ in active_terms]
         elif config.composition_method == CompositionMethod.WEIGHTED_LINEAR:
             vals = [sci_norm, his_norm] + ([crs_norm] if has_crs else [])
             cvs = ScoringEngine.weighted_linear(vals, ScoringEngine.equal_weights(len(vals)))
+            c["cvs_amplifier_terms"] = ["his"]
         elif config.composition_method == CompositionMethod.GEOMETRIC_MEAN:
             vals = [sci_norm, his_norm] + ([crs_norm] if has_crs else [])
             cvs = ScoringEngine.geometric_mean(vals, ScoringEngine.equal_weights(len(vals)))
+            c["cvs_amplifier_terms"] = ["his"]
         else:
             cvs = 0.0
+            c["cvs_amplifier_terms"] = []
 
         c["cvs"] = cvs
         c["cvs_mode"] = "sci_crs_his" if has_crs else "sci_his"
