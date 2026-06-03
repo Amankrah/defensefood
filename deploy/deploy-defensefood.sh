@@ -91,6 +91,30 @@ print_section() {
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 }
 
+# Idempotent cron-line installer that tolerates a missing crontab.
+#
+# On a fresh user (or freshly-baked AMI) `crontab -l` exits 1 because there is
+# no crontab at all, and with `set -euo pipefail` that kills the script.
+# We swallow that exit code and re-write the crontab so the line is present
+# exactly once regardless of prior state.
+#
+# Usage:
+#   install_cron        "grep-key"  "cron-line"   # current user
+#   install_cron --sudo "grep-key"  "cron-line"   # root crontab
+install_cron() {
+    local cron_cmd="crontab"
+    if [ "${1:-}" = "--sudo" ]; then
+        cron_cmd="sudo crontab"
+        shift
+    fi
+    local key="$1"
+    local line="$2"
+    {
+        $cron_cmd -l 2>/dev/null | grep -v -F "$key" || true
+        echo "$line"
+    } | $cron_cmd -
+}
+
 SKIP_SECURITY=false
 SKIP_SSL=false
 SKIP_DATA_CHECK=false
@@ -257,7 +281,8 @@ cat ~/.ssh/authorized_keys 2>/dev/null | cut -d' ' -f3
 echo -e "\n=== Check Complete ==="
 EOFSCRIPT
     sudo chmod +x /usr/local/bin/security-check.sh
-    (crontab -l 2>/dev/null | grep -v "security-check.sh"; echo "0 8 * * 1 /usr/local/bin/security-check.sh >> /var/log/security-check.log 2>&1") | crontab -
+    install_cron "security-check.sh" \
+        "0 8 * * 1 /usr/local/bin/security-check.sh >> /var/log/security-check.log 2>&1"
     print_status "Security monitoring scheduled (Mondays 08:00)"
 
     print_step "1.8 Temp directory cleanup"
@@ -613,8 +638,8 @@ sudo chmod +x /usr/local/bin/defensefood-memory-watchdog.sh
 sudo mkdir -p /var/log/defensefood
 sudo chown "$USER:$USER" /var/log/defensefood
 # Install root cron (sudo restart needs root)
-(sudo crontab -l 2>/dev/null | grep -v "defensefood-memory-watchdog"; \
- echo "*/5 * * * * /usr/local/bin/defensefood-memory-watchdog.sh") | sudo crontab -
+install_cron --sudo "defensefood-memory-watchdog" \
+    "*/5 * * * * /usr/local/bin/defensefood-memory-watchdog.sh"
 print_status "Memory watchdog scheduled (threshold ${MEMORY_THRESHOLD_MB}MB, every 5 min)"
 
 # =============================================================================
@@ -648,8 +673,8 @@ if [[ "$SKIP_SSL" == false ]]; then
     else
         print_error "Certbot failed — fix DNS / firewall and re-run: sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN"
     fi
-    (sudo crontab -l 2>/dev/null | grep -v "certbot renew"; \
-     echo "0 12 * * * /usr/bin/certbot renew --quiet && systemctl reload nginx") | sudo crontab -
+    install_cron --sudo "certbot renew" \
+        "0 12 * * * /usr/bin/certbot renew --quiet && systemctl reload nginx"
 else
     print_warning "Skipping SSL (--skip-ssl)"
 fi
@@ -741,8 +766,8 @@ find \$DIR -name "defensefood_*.tar.gz" -mtime +7 -delete
 echo "Backup: \$DIR/defensefood_\$DATE.tar.gz"
 EOFBK
 sudo chmod +x /usr/local/bin/defensefood-backup.sh
-(sudo crontab -l 2>/dev/null | grep -v "defensefood-backup"; \
- echo "0 2 * * * /usr/local/bin/defensefood-backup.sh >> /var/log/defensefood/backup.log 2>&1") | sudo crontab -
+install_cron --sudo "defensefood-backup" \
+    "0 2 * * * /usr/local/bin/defensefood-backup.sh >> /var/log/defensefood/backup.log 2>&1"
 
 print_status "Utility scripts installed"
 
