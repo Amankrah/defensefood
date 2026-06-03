@@ -698,13 +698,25 @@ if [[ "$SKIP_SSL" == false ]]; then
         sudo curl -s https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf -o /etc/letsencrypt/options-ssl-nginx.conf
         sudo curl -s https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem -o /etc/letsencrypt/ssl-dhparams.pem
     fi
+
+    # Always request the apex. Only add `www.<DOMAIN>` if a record actually
+    # exists — otherwise Let's Encrypt fails the whole transaction with
+    # NXDOMAIN on the missing record (one bad SAN sinks the cert).
+    cert_args=(-d "$DOMAIN")
+    if getent hosts "www.$DOMAIN" > /dev/null 2>&1; then
+        cert_args+=(-d "www.$DOMAIN")
+        print_status "Including www.$DOMAIN in the cert request"
+    else
+        print_warning "www.$DOMAIN has no DNS record; requesting cert for $DOMAIN only"
+    fi
+
     print_warning "Requesting certificate. DNS must already point $DOMAIN → $(curl -s ifconfig.me)"
-    if sudo certbot --nginx -d "$DOMAIN" -d "www.$DOMAIN" \
+    if sudo certbot --nginx "${cert_args[@]}" \
         --non-interactive --agree-tos --email "$SSL_EMAIL" --redirect; then
         print_status "SSL certificate installed"
         sudo nginx -t && sudo systemctl reload nginx
     else
-        print_error "Certbot failed — fix DNS / firewall and re-run: sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN"
+        print_error "Certbot failed — fix DNS / firewall and re-run: sudo certbot --nginx ${cert_args[*]}"
     fi
     install_cron --sudo "certbot renew" \
         "0 12 * * * /usr/bin/certbot renew --quiet && systemctl reload nginx"
