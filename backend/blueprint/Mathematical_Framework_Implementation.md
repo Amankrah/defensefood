@@ -136,9 +136,10 @@ A **corridor** is the lane $(c, i, j)$: one commodity, one destination country, 
 | $w_{\mathrm{trade}}$ | Trade edge weight | Bilateral import kg on graph edge $j \to i$ |
 | $w_{\mathrm{hazard}}$ | Hazard edge weight | HIS on that edge |
 | $w_{\mathrm{dep}}$ | Dependency edge weight | BDI on that edge |
-| $ORPS(j,c,t)$ | Origin risk propagation score | Outbound hazard × dependency × PCC; API: `orps` |
-| $ACEP(i,t)$ | Attention country exposure profile | Inbound hazard × dependency × CRS; API: `acep` |
-| $\hat P(\mathrm{hazard}\mid c,i,j)$ | Empirical hazard probability | Alerts per estimated shipment (Eq 35; not in API yet) |
+| $ORPS(j,c,t)$ | Origin risk propagation score | Outbound hazard × dependency × PCC; API: `orps`, `orps_by_role` |
+| $ACEP(i,t)$ | Attention country exposure profile | Inbound hazard × dependency × CRS; API: `acep`, `acep_by_role` |
+| $\hat P(\mathrm{hazard}\mid c,i,j)$ | Empirical hazard probability | Alerts per estimated shipment (Eq 35); API: `p_hat` on `/hazard-probability` |
+| $\bar m(c)$ | Average shipment size, by HS-2 chapter | Median Comtrade `netWgt` per row; used in Eq 35 |
 
 ---
 
@@ -147,10 +148,10 @@ A **corridor** is the lane $(c, i, j)$: one commodity, one destination country, 
 | Symbol | Name (abbr.) | What it measures |
 |--------|--------------|------------------|
 | $x_{\mathrm{norm}}$ | Normalised score | Percentile (or min–max / log-percentile) rank in $[0,1]$ |
-| $CVS$ | Composite vulnerability score | Lane priority 0–1; API: `cvs` |
-| $w_h, w_p, w_{sc}$ | Amplifier weights | Hazard, **price anomaly (PAS)**, **supply-chain (SCCS):** default 1 each |
-| $PAS_{\mathrm{norm}}$ | Price anomaly signal | Blueprint slot; **not populated** (treated as 0) |
-| $SCCS_{\mathrm{norm}}$ | Supply-chain complexity | Blueprint slot; **not populated** (treated as 0) |
+| $CVS$ | Composite vulnerability score | Lane priority 0–1; API: `cvs`, `cvs_amplifier_terms` |
+| $w_h, w_p, w_{sc}$ | Amplifier weights | Hazard, price-anomaly (PAS), supply-chain (SCCS); default 1 each |
+| $PAS$ | Price anomaly score | $\min(\lvert z_{UV}\rvert, 3)$ per lane; API: `pas`, `pas_norm` |
+| $SCCS$ | Supply-chain complexity score | $1 - OCS$ per lane; API: `sccs`, `sccs_norm` |
 
 ---
 
@@ -316,8 +317,8 @@ $$
 
 | | |
 |--|--|
-| **Symbol** | `sci` (raw), `sci_norm = SCI/2` after percentile pass |
-| **Engine** | Rust `compute_sci` / `compute_sci_normalised` |
+| **Symbol** | `sci` (raw), `sci_norm` (Section 7 percentile rank across corpus) |
+| **Engine** | Rust `compute_sci`; `compute_sci_normalised` (= SCI/2) is computed during dependency enrichment but is **overwritten by Section 7 percentile rank** before the API returns it |
 | **Range** | Raw SCI $\in [0,2]$; norm $\in [0,1]$ |
 | **Interpretation** | The factor $(1+\mathrm{HHI})$ increases corridor criticality when a concentrated import market is dominated by a single origin |
 | **CVS role** | `sci_norm` is mandatory for full composite score |
@@ -641,9 +642,12 @@ $$
 | | |
 |--|--|
 | **API** | `GET /api/v1/countries/{m49}/orps-by-commodity` |
+| **Engine** | Rust `compute_orps`, `compute_orps_by_role` |
 | **Default sum** | **`confirmed` edges only** (distribution/followUp market presence) |
-| **Variant** | Role-split buckets (`confirmed`, `detected`, `informational`, `unknown`) |
-| **Interpretation** | Summation over confirmed edges limits inflation from transit-only attention mentions |
+| **Role split** | `orps_by_role` returns four buckets (`confirmed`, `detected`, `informational`, `unknown`) in one pass |
+| **PCC fallback** | Destinations without a Section 3 PCC use 1.0; `pcc_real_count` and `pcc_proxy_count` are reported per commodity row |
+| **BDI missing** | Edges without bilateral dependency contribute 0 (no severity proxy) |
+| **Interpretation** | Summation over confirmed edges aligns with Pan et al. (2025, *Discover Food*); the variant exposes the other RASFF roles for research |
 
 ---
 
@@ -656,7 +660,11 @@ $$
 | | |
 |--|--|
 | **API** | `GET /api/v1/countries/{m49}/acep`, exposure profile |
+| **Engine** | Rust `compute_acep`, `compute_acep_by_role` |
 | **Default sum** | **`confirmed` inbound edges only** |
+| **Role split** | `acep_by_role` returns four buckets (`confirmed`, `detected`, `informational`, `unknown`) |
+| **CRS source** | Section 3 lookup keyed by $(c, i)$; HS codes without CRS contribute 0 (no 1.0 proxy) |
+| **Data quality** | `crs_resolved_count`, `crs_missing_count`, `crs_missing_hs` (≤10), and `bdi_missing_inbound` accompany the score |
 | **Interpretation** | ACEP weights by CRS so inbound exposure reflects dietary importance in the destination market |
 
 ---
@@ -669,14 +677,21 @@ $$
 
 | | |
 |--|--|
-| **Status** | **Planned:** implemented in Rust engine, **not** exposed in API or dashboard |
-| **Interpretation** | Exposure in the API awaits calibration of shipment-size priors and longer RASFF histories specified in the blueprint |
+| **Status** | **Live** |
+| **API** | `GET /api/v1/corridors/{hs}/{dest}/{origin}/hazard-probability` |
+| **Engine** | Rust `compute_hazard_probability`; $\bar m(c)$ estimated as the median Comtrade `netWgt` per HS-2 chapter (global median fallback for sparse chapters) |
+| **Eligibility gate** | `notification_count ≥ 10` AND bilateral imports present — otherwise the endpoint returns `eligible: false` with a reason string |
+| **Output fields** | `p_hat`, `notification_count`, `total_import_kg`, `avg_shipment_kg`, `estimated_shipments`, `eligible`, `eligibility_reason` |
+| **Catalogue** | Methodology entry `hazard_probability` (§6.4) with three scale bands: rare / occasional / frequent |
+| **Interpretation** | Lower bound on the true rate (only detected hazards counted); cross-reference with DGI (Eq 19) to separate "more fraud" from "more detection" |
 
 ---
 
 ## Section 7: Composite vulnerability scoring
 
-Section 7 normalises sub-scores and composes the composite vulnerability score (CVS) used to rank lanes for inspection priority. Normalisation and composition run at API startup immediately after dependency and hazard enrichment. The API exposes `cvs`, `cvs_mode`, `cvs_hazard_only`, `cvs_missing_inputs`, and the normalised components; scores may be recomputed via `POST /api/v1/scores/recalculate`. Data-quality labels are attached after scoring.
+Section 7 normalises sub-scores and composes the composite vulnerability score (CVS) used to rank lanes for inspection priority. Normalisation and composition run at API startup after dependency, consumption, hazard, and trade-flow enrichment. The API exposes `cvs`, `cvs_mode`, `cvs_hazard_only`, `cvs_missing_inputs`, `cvs_amplifier_terms`, and the normalised components; scores may be recomputed via `POST /api/v1/scoring/recalculate`. Updates to `PUT /api/v1/scoring/config` recompute by default (rebuilding hazard metrics when `alpha_decay` changes); pass `?recompute=false` to stage a change without re-scoring. Data-quality labels are attached after scoring.
+
+The hybrid composition was updated in June 2026 (Slice E1) so the divisor counts only the amplifier terms whose normalised values are actually present on the lane; this removes a rescaling asymmetry where the partial fallback (`sci_his`) outranked full-data lanes. The amplifier inputs $PAS_{\mathrm{norm}}$ and $SCCS_{\mathrm{norm}}$ are now populated end-to-end (Slice E2): $PAS = \min(\lvert z_{UV}\rvert, 3)$ from Section 5.1 and $SCCS = 1 - OCS$ from Section 2.3, both percentile-ranked across the corpus.
 
 ---
 
@@ -701,7 +716,7 @@ $$
 
 | | |
 |--|--|
-| **Applied to** | `sci`, `crs` (and `his` if not using log variant) |
+| **Applied to** | `sci`, `crs`, `pas`, `sccs` (and `his` if not using log variant) |
 | **Interpretation** | Percentile ranks are robust to skewed corridor score distributions |
 
 ---
@@ -747,21 +762,29 @@ $$
 
 ### Equation (41). Hybrid CVS (default)
 
+The implemented form masks inactive amplifier terms so the divisor and numerator agree on which signals are present on the lane:
+
 $$
 \begin{aligned}
-CVS_{\mathrm{raw}} &= SCI_{\mathrm{norm}} \cdot CRS_{\mathrm{norm}} \\
-  &\quad \cdot \bigl(1 + w_h HIS_{\mathrm{norm}} + w_p PAS_{\mathrm{norm}} + w_{sc} SCCS_{\mathrm{norm}}\bigr) \\[4pt]
-CVS &= \frac{CVS_{\mathrm{raw}}}{1 + w_h + w_p + w_{sc}} \in [0,1]
+\mathcal{A} &= \{\, k \in \{HIS, PAS, SCCS\} : x_{k,\mathrm{norm}} \neq \text{None}\,\} \\[4pt]
+CRS^{\star}_{\mathrm{norm}} &= \begin{cases} CRS_{\mathrm{norm}} & \text{if available} \\ 0.5 & \text{neutral fallback} \end{cases} \\[4pt]
+\text{base} &= SCI_{\mathrm{norm}} \cdot CRS^{\star}_{\mathrm{norm}} \\[4pt]
+\text{amp}  &= 1 + \sum_{k \in \mathcal{A}} w_k \cdot x_{k,\mathrm{norm}} \\[4pt]
+\text{max} &= 1 + \sum_{k \in \mathcal{A}} w_k \\[4pt]
+CVS &= \frac{\text{base} \cdot \text{amp}}{\text{max}} \in [0, 1]
 \end{aligned}
 $$
 
 | | |
 |--|--|
+| **Engine** | Masking lives in `defensefood.pipeline.scoring_pipeline.compute_composite_scores` (Slice E1, June 2026); the Rust `score_hybrid` retains the unmasked blueprint formula for documentation/testing |
 | **Default weights** | $w_h = w_p = w_{sc} = 1$ |
-| **PAS / SCCS** | **Not populated:** treated as **0** (amplifier reduces to $1 + w_h HIS_{norm}$) |
-| **Fallback without CRS** | `cvs_mode = sci_his`: base $SCI_{norm}$, amplifier $1 + w_h HIS_{norm}$, same rescaling |
+| **PAS / SCCS** | **Live:** $PAS = \min(\lvert z_{UV}\rvert, 3)$ ranked across corridors with bilateral trade; $SCCS = 1 - OCS$ ranked across corridors with origin share. Either term drops out of $\mathcal{A}$ when missing |
+| **CRS fallback** | `cvs_mode = sci_his`: the missing $CRS_{\mathrm{norm}}$ is replaced by the neutral percentile **0.5** (not 1.0) so the fallback does not artificially outscore full-data lanes |
 | **Missing SCI or HIS** | `cvs = null`; `cvs_hazard_only = his_norm` for hazard-only display |
-| **Interpretation** | The hybrid form couples a structural base with a demand gate; hazard signals amplify but cannot substitute for missing dependency |
+| **Reported terms** | `cvs_amplifier_terms` is the ordered list of $\mathcal{A}$ for that lane (e.g. `["his", "pas", "sccs"]`); the dashboard's *How this CVS was built* explainer substitutes these into the formula |
+| **Scale bands** | Re-anchored June 2026 on the live distribution (`backend/script/output/cvs_distribution_postE2.json`): P75 ≈ 0.22 (Watchlist), P90 ≈ 0.30 (High), P95 ≈ 0.35 (Top). Theoretical max is 1.0 but no real corridor approaches it |
+| **Interpretation** | The hybrid form couples a structural base with a demand gate; hazard, price, and chain-complexity signals amplify but cannot substitute for missing dependency |
 
 Post-scoring annotations (`sci_unavailable_reason`, `data_quality` with values such as `full` and `hazard_only`) document why SCI or CVS may be absent on list and detail views.
 
@@ -771,19 +794,25 @@ Post-scoring annotations (`sci_unavailable_reason`, `data_quality` with values s
 
 ```mermaid
 flowchart TD
-  RASFF[RASFF Excel] --> Lanes[Corridor keys c,i,j]
-  Lanes --> H4[§4 HIS HDI counts]
+  RASFF[RASFF Excel] --> Lanes[Corridor keys c,i,j + market_presence]
+  Lanes --> H4["§4 HIS HDI counts (alpha from ScoringConfig)"]
   Comtrade[Comtrade merged CSV] --> S2[§2 DS IDR OCS HHI SCI]
+  Comtrade --> Mbar["§6.4 m̄(c) HS-2 chapter medians"]
   FAOSTAT[FAOSTAT QCL FBS FishStat] --> S2
   FAOSTAT --> S3[§3 PCC CRS DIS lookups]
   H4 --> Join[Corridor metric records]
   S2 --> Join
   S3 --> Join
   Join --> DGI[§4.5 DGI]
-  DGI --> S7[§7 normalise + CVS]
+  Join --> SCCS["§7 SCCS = 1 - OCS"]
+  Comtrade --> PAS["§7 PAS = min(|z_UV|, 3)"]
+  PAS --> Join
+  SCCS --> Join
+  DGI --> S7["§7 normalise + masked-hybrid CVS"]
   S7 --> DQ[Data quality labels]
   DQ --> API[List and profile endpoints]
   Comtrade --> S5[§5 on demand full profile]
+  Mbar --> Phat["§6.4 P̂ on demand /hazard-probability"]
 ```
 
 ---
@@ -796,9 +825,10 @@ flowchart TD
 | §4 detail | `.../hazard`, `.../notifications` |
 | §5 | `.../full` (`trade_flow`), `.../trade-anomalies`, `.../time-series` |
 | §3 | Fields on corridor; consumption block in `.../full` |
-| §6 | `GET /api/v1/network/graph`, `.../origins`, `GET /api/v1/countries/{m49}/acep`, `.../orps-by-commodity` |
+| §6 network | `GET /api/v1/network/graph`, `.../origins`, `GET /api/v1/countries/{m49}/acep`, `.../orps-by-commodity` |
+| §6.4 | `GET /api/v1/corridors/{hs}/{dest}/{origin}/hazard-probability` |
 | Research | `GET /api/v1/research/coverage`, `.../methodology`, `.../distributions/{metric}` |
-| Config | `GET/POST /api/v1/scores/config`, `.../recalculate` |
+| Config | `GET /api/v1/scoring/config`, `PUT /api/v1/scoring/config[?recompute=false]`, `POST /api/v1/scoring/recalculate` |
 
 ---
 
@@ -806,13 +836,17 @@ flowchart TD
 
 | Blueprint item | Status |
 |----------------|--------|
-| Eq (35) hazard probability | Engine only; no API |
-| PAS, SCCS in Eq (41) | Weights exist; inputs always zero |
+| Eq (35) hazard probability | **Live**: `/hazard-probability` endpoint with `notification_count ≥ 10` gate; $\bar m(c)$ at HS-2 chapter |
+| PAS, SCCS in Eq (41) | **Live**: PAS = $\min(\lvert z_{UV}\rvert, 3)$, SCCS = $1 - OCS$, both percentile-ranked |
+| Eq (41) divisor | Masks inactive amplifier terms (Slice E1); rescaling no longer favours data-poor lanes |
+| CVS scale bands | Re-anchored on the live distribution (P75/P90/P95), not the theoretical [0,1] |
 | DIS in composite | Computed; not in CVS |
-| §5 on corridor list | On-demand only (full profile) |
+| ACEP / ORPS roles | Blueprint sums all role lanes equally; implementation defaults to `confirmed` and exposes `acep_by_role`/`orps_by_role` for transparency (Pan et al. 2025) |
+| §5 on corridor list | On-demand only (full profile) — except `z_uv` which is also stamped at startup for PAS |
 | RASFF month vs Comtrade year | Hazard decay uses YYYYMM; trade uses latest **annual** period |
-| Final destination proof | Not modelled; `market_presence` mitigates network sums only |
+| Final destination proof | Not modelled; `market_presence` constrains network sums and corridor membership |
 | 6+ years Comtrade | Required for Eq (24)–(26) on most lanes |
+| AHP / empirical-calibration weights (§7.3.1, §7.3.3) | Not implemented; equal weights ($w_h = w_p = w_{sc} = 1$) by default |
 
 ---
 
