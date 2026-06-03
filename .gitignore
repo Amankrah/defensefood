@@ -42,6 +42,9 @@ backend/.venv/
 .env.production
 *.pem
 
+# Operational notes for production deploys — host-specific, not for git
+DEPLOYMENT.md
+
 # ──────────────────────────────────────────────
 #  Node.js / Next.js (frontend)
 # ──────────────────────────────────────────────
