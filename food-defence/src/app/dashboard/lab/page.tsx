@@ -7,8 +7,10 @@ import Distributions from "./_panels/Distributions";
 import Cohorts from "./_panels/Cohorts";
 import TimeSeries from "./_panels/TimeSeries";
 import Methodology from "./_panels/Methodology";
+import QAPanel from "@/components/shared/QAPanel";
 
 type TabKey =
+  | "qa"
   | "distributions"
   | "cohorts"
   | "time_series"
@@ -16,6 +18,12 @@ type TabKey =
   | "methodology";
 
 const TABS: { key: TabKey; label: string; description: string }[] = [
+  {
+    key: "qa",
+    label: "Ask",
+    description:
+      "Conversational research assistant. Ask in plain English; the agent picks tools, gathers evidence, and answers with citations.",
+  },
   {
     key: "distributions",
     label: "Distributions",
@@ -44,7 +52,7 @@ const TABS: { key: TabKey; label: string; description: string }[] = [
 ];
 
 function LabInner() {
-  const [tab, setTab] = useState<TabKey>("distributions");
+  const [tab, setTab] = useState<TabKey>("qa");
 
   const current = TABS.find((t) => t.key === tab)!;
 
@@ -107,6 +115,7 @@ function LabInner() {
       <p className="-mt-3 text-[11px] text-slate-500">{current.description}</p>
 
       <section aria-label={current.label}>
+        {tab === "qa" && <QAPanel />}
         {tab === "distributions" && <Distributions />}
         {tab === "cohorts" && <Cohorts />}
         {tab === "time_series" && <TimeSeries />}

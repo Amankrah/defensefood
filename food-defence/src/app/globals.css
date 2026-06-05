@@ -99,3 +99,24 @@ body {
   margin-bottom: 0.5rem;
   line-height: 1.6;
 }
+
+/* Reset fieldset defaults when used as inline controls */
+fieldset.df-fieldset-inline {
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  border: none;
+}
+
+/* Screen-reader only text (form labels, legends) */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}

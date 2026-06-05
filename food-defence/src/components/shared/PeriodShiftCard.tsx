@@ -28,6 +28,7 @@ import {
   streamPeriodShift,
 } from "@/lib/agentApi";
 import { BriefSkeleton, phaseFromStatus } from "./LoadingSkeleton";
+import PeriodShiftPeriodPicker from "./PeriodShiftPeriodPicker";
 
 interface PeriodShiftCardProps {
   /** Optional explicit period override; otherwise the backend picks the latest two. */
@@ -144,7 +145,6 @@ export default function PeriodShiftCard({
       } catch (e) {
         if (cancelled) return;
         setState({ phase: "needs_generation", toolCalls: [], verifierNotes: [] });
-        // eslint-disable-next-line no-console
         console.warn("PeriodShiftCard probe failed", e);
       }
     })();
@@ -152,7 +152,6 @@ export default function PeriodShiftCard({
       cancelled = true;
       abortRef.current?.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedA, selectedB]);
 
   const brief = state.response?.brief;
@@ -177,7 +176,7 @@ export default function PeriodShiftCard({
             Period-shift diagnostic
           </span>
           {available.length >= 2 ? (
-            <PeriodPicker
+            <PeriodShiftPeriodPicker
               available={available}
               valueA={rp?.period_a}
               valueB={rp?.period_b}
@@ -416,69 +415,6 @@ function reduceEvent(prev: LoadState, ev: AgentEvent): LoadState {
 /* ──────────────────────────────────────────────────────────────────── */
 /* Sub-components                                                       */
 /* ──────────────────────────────────────────────────────────────────── */
-
-function PeriodPicker({
-  available,
-  valueA,
-  valueB,
-  disabled,
-  onChange,
-}: {
-  available: number[];
-  valueA?: number;
-  valueB?: number;
-  disabled: boolean;
-  onChange: (a: number | undefined, b: number | undefined) => void;
-}) {
-  // Keep value rendering deterministic: if the current pick isn't in the
-  // available list (e.g. the resolver fell back), show it anyway with a star.
-  const renderOption = (y: number) => (
-    <option key={y} value={y}>
-      {y}
-    </option>
-  );
-
-  const selA = valueA != null && available.includes(valueA) ? valueA : (valueA ?? "");
-  const selB = valueB != null && available.includes(valueB) ? valueB : (valueB ?? "");
-
-  return (
-    <div className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1.5 py-0.5">
-      <select
-        aria-label="Baseline year"
-        title="Baseline year"
-        disabled={disabled}
-        className="rounded bg-transparent px-1 font-mono text-[10px] text-slate-700 focus:outline-none disabled:opacity-50"
-        value={selA}
-        onChange={(e) => onChange(parseInt(e.target.value), valueB)}
-      >
-        {available.map(renderOption)}
-        {valueA != null && !available.includes(valueA) && (
-          <option key="custom-a" value={valueA}>
-            {valueA} *
-          </option>
-        )}
-      </select>
-      <span className="text-[10px] text-slate-400" aria-hidden>
-        →
-      </span>
-      <select
-        aria-label="Comparison year"
-        title="Comparison year"
-        disabled={disabled}
-        className="rounded bg-transparent px-1 font-mono text-[10px] text-slate-700 focus:outline-none disabled:opacity-50"
-        value={selB}
-        onChange={(e) => onChange(valueA, parseInt(e.target.value))}
-      >
-        {available.map(renderOption)}
-        {valueB != null && !available.includes(valueB) && (
-          <option key="custom-b" value={valueB}>
-            {valueB} *
-          </option>
-        )}
-      </select>
-    </div>
-  );
-}
 
 function MoverColumn({
   title,

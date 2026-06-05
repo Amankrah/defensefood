@@ -467,6 +467,275 @@ export async function fetchPeriodShift(opts?: {
   return res.json();
 }
 
+// ── conversational Q&A (Phase 4) ──────────────────────────────────────────
+
+export type QAIntent =
+  | "lookup"
+  | "filter"
+  | "compare"
+  | "explain"
+  | "methodology"
+  | "narrative_freeform"
+  | "out_of_scope";
+
+export interface QueryEntities {
+  commodity_hs: string[];
+  country_m49: number[];
+  metric_keys: string[];
+  period_a: number | null;
+  period_b: number | null;
+  direction: "rising" | "falling" | "any" | null;
+  threshold: number | null;
+}
+
+export interface IntentClassification {
+  intent: QAIntent;
+  in_scope: boolean;
+  refusal_reason: string | null;
+  entities: QueryEntities;
+}
+
+export interface QATableColumn {
+  key: string;
+  label: string;
+  align: "left" | "right";
+}
+
+export interface QAStructuredData {
+  title: string;
+  columns: QATableColumn[];
+  rows: Record<string, string | number | null>[];
+  lane_keys: string[];
+}
+
+export interface QATurn {
+  answer_markdown: string;
+  key_signals: CitedSignal[];
+  structured_data: QAStructuredData | null;
+  caveats: string[];
+  confidence: Confidence;
+  verifier_notes: string[];
+}
+
+export interface QAResultResponse {
+  conversation_id: string;
+  turn: QATurn;
+  classification: IntentClassification;
+  refused: boolean;
+  provider: string;
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  latency_ms: number;
+  tool_trace: ToolTrace[];
+}
+
+export interface ConversationMessage {
+  id: number;
+  role: "user" | "assistant" | "system" | "tool";
+  content: Record<string, unknown>;
+  tool_calls: { name: string; args: unknown; latency_ms: number }[] | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  cost_usd: number | null;
+  created_at: number;
+}
+
+export interface ConversationDetail {
+  id: string;
+  started_at: number;
+  last_used_at: number;
+  title: string | null;
+  summary: string | null;
+  messages: ConversationMessage[];
+}
+
+export interface ConversationHeader {
+  id: string;
+  started_at: number;
+  last_used_at: number;
+  title: string | null;
+  summary: string | null;
+  message_count: number;
+}
+
+export type QAEvent =
+  | { kind: "status"; phase: string; conversation_id?: string | null }
+  | { kind: "intent"; classification: IntentClassification }
+  | {
+      kind: "tool_call";
+      name: string;
+      args: Record<string, unknown>;
+      latency_ms: number;
+    }
+  | { kind: "tool_result"; name: string; result: ToolTrace["result"] }
+  | { kind: "verifier_note"; note: string }
+  | { kind: "final_answer"; response: QAResultResponse }
+  | { kind: "error"; message: string; code: number };
+
+export async function fetchQA(
+  query: string,
+  conversation_id?: string
+): Promise<QAResultResponse> {
+  const res = await fetch(`${API_BASE}/agent/qa`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, conversation_id: conversation_id ?? null }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (body.detail) detail = body.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`QA ${res.status}: ${detail}`);
+  }
+  return res.json();
+}
+
+export async function* streamQA(
+  query: string,
+  opts: {
+    conversation_id?: string;
+    signal?: AbortSignal;
+  } = {}
+): AsyncGenerator<QAEvent, void, void> {
+  const res = await fetch(`${API_BASE}/agent/qa?stream=true`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    },
+    body: JSON.stringify({
+      query,
+      conversation_id: opts.conversation_id ?? null,
+    }),
+    cache: "no-store",
+    signal: opts.signal,
+  });
+  if (!res.ok || !res.body) {
+    yield {
+      kind: "error",
+      message: `HTTP ${res.status}: ${res.statusText}`,
+      code: res.status,
+    };
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const parsed = parseQaSseFrame(raw);
+        if (parsed) yield parsed;
+      }
+    }
+  } catch (e) {
+    if ((e as { name?: string }).name === "AbortError") return;
+    throw e;
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* noop */
+    }
+  }
+}
+
+function parseQaSseFrame(raw: string): QAEvent | null {
+  let event = "message";
+  const dataLines: string[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+  }
+  if (dataLines.length === 0) return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(dataLines.join("\n"));
+  } catch {
+    return null;
+  }
+  const obj = (data as Record<string, unknown>) ?? {};
+  switch (event) {
+    case "status":
+      return {
+        kind: "status",
+        phase: String(obj.phase ?? ""),
+        conversation_id: (obj.conversation_id as string | null) ?? null,
+      };
+    case "intent":
+      return {
+        kind: "intent",
+        classification: obj as unknown as IntentClassification,
+      };
+    case "tool_call":
+      return {
+        kind: "tool_call",
+        name: String(obj.name ?? ""),
+        args: (obj.args as Record<string, unknown>) ?? {},
+        latency_ms: Number(obj.latency_ms ?? 0),
+      };
+    case "tool_result":
+      return {
+        kind: "tool_result",
+        name: String(obj.name ?? ""),
+        result: (obj.result as ToolTrace["result"]) ?? { ok: false },
+      };
+    case "verifier_note":
+      return { kind: "verifier_note", note: String(obj.note ?? "") };
+    case "final_answer":
+      return {
+        kind: "final_answer",
+        response: obj as unknown as QAResultResponse,
+      };
+    case "error":
+      return {
+        kind: "error",
+        message: String(obj.message ?? ""),
+        code: Number(obj.code ?? 500),
+      };
+    default:
+      return null;
+  }
+}
+
+export async function listConversations(
+  limit = 20
+): Promise<{ rows: ConversationHeader[] }> {
+  const res = await fetch(
+    `${API_BASE}/agent/conversations?limit=${limit}`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) throw new Error(`Conversations ${res.status}`);
+  return res.json();
+}
+
+export async function fetchConversation(
+  id: string
+): Promise<ConversationDetail> {
+  const res = await fetch(
+    `${API_BASE}/agent/conversations/${encodeURIComponent(id)}`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) throw new Error(`Conversation ${res.status}: ${res.statusText}`);
+  return res.json();
+}
+
 export async function* streamPeriodShift(
   opts: {
     period_a?: number;

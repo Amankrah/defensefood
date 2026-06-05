@@ -79,6 +79,34 @@ CREATE TABLE IF NOT EXISTS cost_ledger (
     usd        REAL NOT NULL,
     PRIMARY KEY (day, use_case, provider, model)
 );
+
+-- Phase 4: conversation memory for the Q&A workbench.
+CREATE TABLE IF NOT EXISTS conversations (
+    id            TEXT PRIMARY KEY,
+    started_at    REAL NOT NULL,
+    last_used_at  REAL NOT NULL,
+    title         TEXT,
+    summary       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_recent
+    ON conversations(last_used_at DESC);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id  TEXT NOT NULL,
+    role             TEXT NOT NULL,        -- 'user' | 'assistant' | 'system' | 'tool'
+    content_json     TEXT NOT NULL,
+    tool_calls_json  TEXT,
+    tokens_in        INTEGER,
+    tokens_out       INTEGER,
+    cost_usd         REAL,
+    created_at       REAL NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_by_convo
+    ON messages(conversation_id, created_at, id);
 """
 
 
@@ -353,6 +381,185 @@ def daily_costs(
 # ── snapshot hashing ──────────────────────────────────────────────────────
 
 
+# ── conversations + messages (Phase 4) ────────────────────────────────────
+
+
+def upsert_conversation(
+    conversation_id: str,
+    *,
+    title: Optional[str] = None,
+    summary: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> None:
+    """Insert or touch a conversation. last_used_at is bumped to now()."""
+    now = time.time()
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT id FROM conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO conversations (id, started_at, last_used_at, title, summary) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (conversation_id, now, now, title, summary),
+            )
+        else:
+            updates: list[str] = ["last_used_at = ?"]
+            params: list[Any] = [now]
+            if title is not None:
+                updates.append("title = ?")
+                params.append(title)
+            if summary is not None:
+                updates.append("summary = ?")
+                params.append(summary)
+            params.append(conversation_id)
+            conn.execute(
+                f"UPDATE conversations SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+
+
+def append_message(
+    *,
+    conversation_id: str,
+    role: str,
+    content: Any,
+    tool_calls: Optional[list[dict[str, Any]]] = None,
+    tokens_in: Optional[int] = None,
+    tokens_out: Optional[int] = None,
+    cost_usd: Optional[float] = None,
+    db_path: Optional[str] = None,
+) -> int:
+    """Append a turn to ``messages``. Returns the inserted row id."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO messages "
+            "(conversation_id, role, content_json, tool_calls_json, "
+            " tokens_in, tokens_out, cost_usd, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                conversation_id,
+                role,
+                json.dumps(content, ensure_ascii=False, default=str),
+                (
+                    json.dumps(tool_calls, ensure_ascii=False, default=str)
+                    if tool_calls is not None
+                    else None
+                ),
+                tokens_in,
+                tokens_out,
+                cost_usd,
+                time.time(),
+            ),
+        )
+        row = conn.execute("SELECT last_insert_rowid() AS id").fetchone()
+    return int(row["id"])
+
+
+def get_conversation(
+    conversation_id: str,
+    *,
+    limit: Optional[int] = None,
+    db_path: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Return a conversation header + messages (ascending by created_at).
+
+    ``limit`` truncates to the most recent N messages. None returns all.
+    """
+    with _connect(db_path) as conn:
+        head = conn.execute(
+            "SELECT id, started_at, last_used_at, title, summary "
+            "FROM conversations WHERE id = ?",
+            (conversation_id,),
+        ).fetchone()
+        if head is None:
+            return None
+        if limit is None:
+            rows = conn.execute(
+                "SELECT id, role, content_json, tool_calls_json, "
+                "       tokens_in, tokens_out, cost_usd, created_at "
+                "FROM messages WHERE conversation_id = ? "
+                "ORDER BY created_at ASC, id ASC",
+                (conversation_id,),
+            ).fetchall()
+        else:
+            # Take the last N then reverse to ascending.
+            rows = conn.execute(
+                "SELECT id, role, content_json, tool_calls_json, "
+                "       tokens_in, tokens_out, cost_usd, created_at "
+                "FROM messages WHERE conversation_id = ? "
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
+                (conversation_id, int(limit)),
+            ).fetchall()
+            rows = list(reversed(rows))
+
+    return {
+        "id": head["id"],
+        "started_at": head["started_at"],
+        "last_used_at": head["last_used_at"],
+        "title": head["title"],
+        "summary": head["summary"],
+        "messages": [
+            {
+                "id": r["id"],
+                "role": r["role"],
+                "content": json.loads(r["content_json"]),
+                "tool_calls": (
+                    json.loads(r["tool_calls_json"]) if r["tool_calls_json"] else None
+                ),
+                "tokens_in": r["tokens_in"],
+                "tokens_out": r["tokens_out"],
+                "cost_usd": r["cost_usd"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ],
+    }
+
+
+def list_conversations(
+    *,
+    limit: int = 20,
+    db_path: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Return the most-recently-used conversations (headers only)."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT c.id, c.started_at, c.last_used_at, c.title, c.summary, "
+            "       COUNT(m.id) AS message_count "
+            "FROM conversations c "
+            "LEFT JOIN messages m ON m.conversation_id = c.id "
+            "GROUP BY c.id "
+            "ORDER BY c.last_used_at DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "started_at": r["started_at"],
+            "last_used_at": r["last_used_at"],
+            "title": r["title"],
+            "summary": r["summary"],
+            "message_count": r["message_count"],
+        }
+        for r in rows
+    ]
+
+
+def count_messages(
+    conversation_id: str, *, db_path: Optional[str] = None
+) -> int:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+    return int(row["n"])
+
+
+# ── snapshot hashing ──────────────────────────────────────────────────────
+
+
 def snapshot_hash(parts: Iterable[Any]) -> str:
     """Stable SHA-256 over the given parts (each str-coerced).
 
@@ -370,3 +577,6 @@ def snapshot_hash(parts: Iterable[Any]) -> str:
         h.update(repr(p).encode("utf-8"))
         h.update(b"\x00")
     return h.hexdigest()[:16]  # 64 bits is plenty for cache keying
+
+
+# ── existing __all__ kept unchanged below ─────────────────────────────────

@@ -17,6 +17,7 @@ from typing import AsyncIterator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from defensefood.agent import cache as agent_cache
 from defensefood.agent.briefs.country_brief import (
@@ -32,6 +33,8 @@ from defensefood.agent.briefs.period_shift import (
     PeriodShiftResult,
     generate_period_shift_brief,
 )
+from defensefood.agent.qa import handle_query
+from defensefood.agent.qa.runner import QAResult
 from defensefood.api.dependencies import AppState, get_state
 
 logger = logging.getLogger(__name__)
@@ -631,6 +634,116 @@ def period_shift(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── conversational Q&A (Phase 4) ──────────────────────────────────────────
+
+
+class QAQuery(BaseModel):
+    """Request body for ``POST /api/v1/agent/qa``."""
+
+    query: str = Field(min_length=1, max_length=4000)
+    conversation_id: str | None = None
+
+
+def _qa_result_to_dict(result: QAResult) -> dict:
+    return result.model_dump(mode="json")
+
+
+@router.post("/qa")
+def qa(
+    body: QAQuery,
+    stream: bool = Query(
+        False, description="Stream routing + tool + answer events as SSE."
+    ),
+    state: AppState = Depends(get_state),
+):
+    """Single Q&A turn against the corpus.
+
+    Out-of-scope queries short-circuit after routing with a graceful refusal
+    (no Sonnet tokens spent). In-scope queries run the composer (Sonnet)
+    with the full corpus toolbox and persist the turn to the conversation
+    memory.
+    """
+    if not stream:
+        try:
+            result = handle_query(
+                body.query,
+                state=state,
+                conversation_id=body.conversation_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return _qa_result_to_dict(result)
+
+    async def event_stream() -> AsyncIterator[bytes]:
+        yield _sse(
+            "status",
+            {"phase": "routing", "conversation_id": body.conversation_id},
+        )
+        try:
+            result = handle_query(
+                body.query,
+                state=state,
+                conversation_id=body.conversation_id,
+            )
+        except ValueError as exc:
+            yield _sse("error", {"message": str(exc), "code": 400})
+            return
+        except RuntimeError as exc:
+            yield _sse("error", {"message": str(exc), "code": 502})
+            return
+
+        yield _sse(
+            "intent",
+            result.classification.model_dump(),
+        )
+        if result.refused:
+            yield _sse(
+                "final_answer",
+                _qa_result_to_dict(result),
+            )
+            return
+
+        for t in result.tool_trace:
+            yield _sse(
+                "tool_call",
+                {
+                    "name": t["name"],
+                    "args": t["args"],
+                    "latency_ms": t["latency_ms"],
+                },
+            )
+            yield _sse("tool_result", {"name": t["name"], "result": t["result"]})
+        for note in result.turn.verifier_notes:
+            yield _sse("verifier_note", {"note": note})
+
+        yield _sse("final_answer", _qa_result_to_dict(result))
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/conversations")
+def list_conversations(limit: int = Query(20, ge=1, le=100)):
+    """List the most recently used Q&A conversations (headers only)."""
+    return {"rows": agent_cache.list_conversations(limit=limit)}
+
+
+@router.get("/conversations/{conversation_id}")
+def get_conversation(conversation_id: str):
+    """Return a conversation's full message history for the chat UI."""
+    convo = agent_cache.get_conversation(conversation_id)
+    if convo is None:
+        raise HTTPException(
+            status_code=404, detail=f"Conversation {conversation_id} not found."
+        )
+    return convo
 
 
 # ── audit / evidence ──────────────────────────────────────────────────────
