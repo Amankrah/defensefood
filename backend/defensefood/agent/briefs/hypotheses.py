@@ -31,7 +31,6 @@ from pydantic import BaseModel, Field, ValidationError
 
 from defensefood.agent.briefs.lane_brief import _sanitise_style
 from defensefood.agent.briefs.schemas import (
-    CitedSignal,
     Hypothesis,
     HypothesisSet,
 )
@@ -74,10 +73,12 @@ _MIN_HYPOTHESES = 2
     description=(
         "Submit the final hypothesis set. The hypotheses array MUST contain "
         f"at least {_MIN_HYPOTHESES} entries (ideally 2 to 4). Submissions "
-        "with fewer than this are rejected by the tool itself and you will "
-        "be asked to retry. Every numerical value cited in a hypothesis "
-        "narrative must appear in supporting_signals or contradicting_signals "
-        "with a matching source_field."
+        "with fewer are rejected. Every hypothesis has flat fields only: "
+        "headline (str), narrative (str), confidence (low/med/high), "
+        "supporting_evidence (list of short strings), contradicting_evidence "
+        "(list of short strings), falsifying_test (one string), next_data "
+        "(one string). Reference metric source_field names inline in the "
+        "narrative and evidence strings (e.g. 'OCS 0.5 (high band)')."
     ),
 )
 def _submit_hypotheses(args: HypothesisSet, *, state: Any) -> dict[str, Any]:
@@ -253,54 +254,56 @@ def _build_user_prompt(
 # ── reflection ──────────────────────────────────────────────────────────
 
 
-def _verify_signals(
-    signals: list[CitedSignal], corridor: dict[str, Any], tolerance: float = 2e-2
-) -> list[str]:
-    """Verify signal values against the corridor record (best-effort)."""
-    notes: list[str] = []
-    for sig in signals:
-        actual = corridor.get(sig.source_field)
-        if isinstance(sig.value, (int, float)) and isinstance(actual, (int, float)):
-            af = _coerce_float(actual)
-            cf = _coerce_float(sig.value)
-            if af is None or cf is None:
-                continue
-            denom = max(abs(af), 1e-2)
-            if abs(af - cf) / denom > tolerance:
-                notes.append(
-                    f"signal {sig.source_field}: claim={sig.value} engine={actual}"
-                )
-                sig.value = af
-    return notes
-
-
 def _sanitise_set_style(hset: HypothesisSet) -> list[str]:
+    """Apply the shared style sanitiser across every text field."""
     notes: list[str] = []
+
     new_summary, sum_notes = _sanitise_style(hset.pattern_summary)
     hset.pattern_summary = new_summary
     notes.extend(sum_notes)
+
     new_label, lbl_notes = _sanitise_style(hset.target_label)
     hset.target_label = new_label
     notes.extend(lbl_notes)
+
     new_caveats: list[str] = []
     for c in hset.caveats:
         nc, cn = _sanitise_style(c)
         new_caveats.append(nc)
         notes.extend(cn)
     hset.caveats = new_caveats
+
     for h in hset.hypotheses:
         new_headline, hn = _sanitise_style(h.headline)
         h.headline = new_headline
         notes.extend(hn)
+
         new_narr, nn = _sanitise_style(h.narrative)
         h.narrative = new_narr
         notes.extend(nn)
-        new_test, tn = _sanitise_style(h.falsifying_test.description)
-        h.falsifying_test.description = new_test
+
+        new_test, tn = _sanitise_style(h.falsifying_test)
+        h.falsifying_test = new_test
         notes.extend(tn)
+
         new_data, dn = _sanitise_style(h.next_data)
         h.next_data = new_data
         notes.extend(dn)
+
+        new_sup: list[str] = []
+        for s in h.supporting_evidence:
+            ns, sn = _sanitise_style(s)
+            new_sup.append(ns)
+            notes.extend(sn)
+        h.supporting_evidence = new_sup
+
+        new_con: list[str] = []
+        for s in h.contradicting_evidence:
+            ns, sn = _sanitise_style(s)
+            new_con.append(ns)
+            notes.extend(sn)
+        h.contradicting_evidence = new_con
+
     return notes
 
 
@@ -444,14 +447,11 @@ def generate_hypotheses(
             "writing the hypothesis array; try again with a fresh request."
         )
 
-    # Reflection.
+    # Reflection. Numerical-signal verification is no longer available
+    # because the flat schema stores evidence as plain strings; we rely on
+    # the caveat aggregator + style sanitiser instead.
     if verify != "off":
         verifier_notes: list[str] = []
-        for h in hset.hypotheses:
-            verifier_notes.extend(_verify_signals(h.supporting_signals, corridor))
-            verifier_notes.extend(
-                _verify_signals(h.contradicting_signals, corridor)
-            )
         periods_count = len(preload.get("per_period_snapshots") or {})
         verifier_notes.extend(_check_required_caveats(corridor, hset, periods_count))
         verifier_notes.extend(_sanitise_set_style(hset))

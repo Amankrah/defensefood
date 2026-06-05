@@ -15,7 +15,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import {
-  type CitedSignal,
   type Hypothesis,
   type HypothesisResponse,
   fetchHypotheses,
@@ -273,36 +272,33 @@ function HypothesisRow({
           </ReactMarkdown>
         </div>
 
-        {hypothesis.supporting_signals.length > 0 && (
-          <SignalBlock
+        {hypothesis.supporting_evidence.length > 0 && (
+          <EvidenceBlock
             label="Supporting"
             icon={CheckCircle2}
             colour="text-emerald-700"
-            signals={hypothesis.supporting_signals}
+            items={hypothesis.supporting_evidence}
           />
         )}
-        {hypothesis.contradicting_signals.length > 0 && (
-          <SignalBlock
+        {hypothesis.contradicting_evidence.length > 0 && (
+          <EvidenceBlock
             label="Contradicting"
             icon={XCircle}
             colour="text-rose-700"
-            signals={hypothesis.contradicting_signals}
+            items={hypothesis.contradicting_evidence}
           />
         )}
 
-        <div className="rounded-md border border-slate-100 bg-slate-50/60 p-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-            How to falsify
-          </p>
-          <p className="mt-1 text-[11px] text-slate-700">
-            {hypothesis.falsifying_test.description}
-          </p>
-          {hypothesis.falsifying_test.suggested_tools.length > 0 && (
-            <p className="mt-1 font-mono text-[10px] text-slate-500">
-              tools: {hypothesis.falsifying_test.suggested_tools.join(", ")}
+        {hypothesis.falsifying_test && (
+          <div className="rounded-md border border-slate-100 bg-slate-50/60 p-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              How to falsify
             </p>
-          )}
-        </div>
+            <p className="mt-1 text-[11px] text-slate-700">
+              {hypothesis.falsifying_test}
+            </p>
+          </div>
+        )}
 
         {hypothesis.next_data && (
           <p className="text-[11px] italic text-slate-600">
@@ -315,28 +311,26 @@ function HypothesisRow({
   );
 }
 
-function SignalBlock({
+function EvidenceBlock({
   label,
   icon: Icon,
   colour,
-  signals,
+  items,
 }: {
   label: string;
   icon: typeof CheckCircle2;
   colour: string;
-  signals: CitedSignal[];
+  items: string[];
 }) {
   return (
     <div>
       <p className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider ${colour}`}>
         <Icon size={10} aria-hidden /> {label}
       </p>
-      <ul className="mt-0.5 space-y-0.5 font-mono text-[10px] text-slate-600">
-        {signals.map((s, i) => (
+      <ul className="mt-0.5 space-y-0.5 text-[11px] text-slate-700">
+        {items.map((it, i) => (
           <li key={i}>
-            <span className="text-slate-400">·</span> {s.source_field} ={" "}
-            {s.value === null ? "—" : String(s.value)}{" "}
-            <span className="text-slate-400">({s.band})</span>
+            <span className="text-slate-400">·</span> {it}
           </li>
         ))}
       </ul>

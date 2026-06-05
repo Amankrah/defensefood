@@ -28,8 +28,6 @@ def temp_db(monkeypatch):
 
 from defensefood.agent.briefs import hypotheses as h_mod
 from defensefood.agent.briefs.schemas import (
-    CitedSignal,
-    FalsifyingTest,
     Hypothesis,
     HypothesisSet,
 )
@@ -68,26 +66,23 @@ def _state() -> SimpleNamespace:
     )
 
 
-def _hypothesis() -> Hypothesis:
+def _hypothesis(headline: str = "Origin concentration grew because the second-largest supplier exited.") -> Hypothesis:
     return Hypothesis(
-        headline="Origin concentration grew because the second-largest supplier exited.",
+        headline=headline,
         narrative=(
             "Origin Concentration Share (OCS) of 0.5 with seven notifications "
-            "supports a story where exits from the lane drove imports onto a "
+            "matches a story where exits from the lane drove imports onto a "
             "single dominant supplier."
         ),
         confidence="med",
-        supporting_signals=[
-            CitedSignal(name="OCS", source_field="ocs", value=0.5, band="med"),
-            CitedSignal(name="HIS", source_field="his", value=0.42, band="med"),
+        supporting_evidence=[
+            "OCS 0.5 (high band)",
+            "HIS 0.42 (med band)",
         ],
-        contradicting_signals=[],
-        falsifying_test=FalsifyingTest(
-            description=(
-                "Compare 2022 and 2023 origin shares; confirm the second-largest "
-                "supplier dropped out."
-            ),
-            suggested_tools=["compare_periods"],
+        contradicting_evidence=[],
+        falsifying_test=(
+            "Run compare_periods on 2022 vs 2023 and confirm the "
+            "second-largest supplier dropped out."
         ),
         next_data="Annual origin-share leaderboard from a trade-data provider.",
     )
@@ -97,7 +92,12 @@ def _set() -> HypothesisSet:
     return HypothesisSet(
         target_label="Spain mussels into France",
         pattern_summary="Lane carries watchlist-band CVS with seven RASFF alerts.",
-        hypotheses=[_hypothesis()],
+        hypotheses=[
+            _hypothesis(),
+            _hypothesis(
+                "Null hypothesis: the pattern matches peer behaviour and is not anomalous."
+            ),
+        ],
         caveats=[],
     )
 
@@ -131,7 +131,7 @@ def test_generates_hypothesis_set_with_preload():
     with patch.object(h_mod, "get_provider", return_value=prov):
         result = h_mod.generate_hypotheses("30771", 250, 724, state=state, verify="off")
     assert result.hset.target_label == "Spain mussels into France"
-    assert len(result.hset.hypotheses) == 1
+    assert len(result.hset.hypotheses) == 2
     # Preload tools (corridor profile, notifications, interpretations) are NOT
     # offered to the agent.
     assert "get_corridor_profile" not in prov.calls[0]["tools"]
@@ -178,46 +178,33 @@ def test_corridor_not_found_raises():
             h_mod.generate_hypotheses("999", 1, 2, state=state, verify="off")
 
 
-def test_hypothesis_validates_without_explicit_falsifying_test():
-    """Regression: previously the model could produce a Hypothesis without a
-    falsifying_test field and validation would reject the whole submission.
-    Now FalsifyingTest has all-default fields and Hypothesis.falsifying_test
-    has a default factory, so partial drafts pass.
+def test_hypothesis_validates_with_minimal_fields():
+    """The flat Hypothesis shape: only headline + narrative are required; all
+    other fields have safe defaults so partial drafts validate.
     """
-    from defensefood.agent.briefs.schemas import (
-        Hypothesis,
-        HypothesisSet,
-    )
-
-    # No falsifying_test on the dict at all → must validate.
     raw = {
         "headline": "Origin concentration rose because of a supplier exit.",
         "narrative": "OCS climbed from 0.4 to 0.5 between 2022 and 2023.",
-        "confidence": "med",
-        # no supporting / contradicting signals, no falsifying_test, no next_data
+        # no confidence, no evidence lists, no falsifying_test, no next_data
     }
     h = Hypothesis.model_validate(raw)
-    assert h.falsifying_test.description == ""
+    assert h.confidence == "med"
+    assert h.falsifying_test == ""
     assert h.next_data == ""
-
-    # Empty FalsifyingTest with no fields also validates.
-    hset = HypothesisSet(
-        target_label="x",
-        pattern_summary="x",
-        hypotheses=[h],
-    )
-    assert len(hset.hypotheses) == 1
+    assert h.supporting_evidence == []
+    assert h.contradicting_evidence == []
 
 
-def test_tool_layer_rejects_empty_hypothesis_array():
-    """The submit_hypotheses tool itself raises when given an empty array, so
-    the model sees a recoverable error mid-loop and self-corrects on the
-    next iteration. We invoke the tool directly to pin the contract.
+def test_schema_rejects_empty_hypothesis_array_at_tool_layer():
+    """Regression: the schema now marks hypotheses as required with
+    min_length=2, so an empty array fails at Pydantic args validation
+    before the tool function ever runs. The Anthropic API sees the schema's
+    required list, which prevents the 'metadata-only submit' failure mode
+    we hit in Phase 5.1.
     """
     from defensefood.agent.tools import invoke_tool
 
     state = _state()
-    # An empty hypotheses array is rejected at the tool layer.
     result = invoke_tool(
         "submit_hypotheses",
         {
@@ -228,7 +215,10 @@ def test_tool_layer_rejects_empty_hypothesis_array():
         state=state,
     )
     assert result["ok"] is False
-    assert "at least 2" in result["error"]
+    # Pydantic min_length error or tool-layer ValueError; either way the
+    # error message must guide the model toward the 2-entry minimum.
+    err = result["error"].lower()
+    assert "at least 2" in err or "too_short" in err or "min" in err
 
 
 def test_tool_layer_accepts_two_or_more_hypotheses():

@@ -471,18 +471,18 @@ export async function fetchPeriodShift(opts?: {
 
 export type AnomalyVerdict = "anomalous" | "borderline" | "not_anomalous";
 
-export interface FalsifyingTest {
-  description: string;
-  suggested_tools: string[];
-}
-
+/**
+ * Flat hypothesis shape — every field is a plain string or list of strings.
+ * The previous nested-CitedSignal version was consistently failing because
+ * the model wouldn't populate deeply nested tool-call args.
+ */
 export interface Hypothesis {
   headline: string;
   narrative: string;
   confidence: Confidence;
-  supporting_signals: CitedSignal[];
-  contradicting_signals: CitedSignal[];
-  falsifying_test: FalsifyingTest;
+  supporting_evidence: string[];
+  contradicting_evidence: string[];
+  falsifying_test: string;
   next_data: string;
 }
 

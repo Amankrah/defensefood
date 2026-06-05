@@ -282,35 +282,30 @@ class PeriodShiftBrief(BaseModel):
 # ── Phase 5: hypothesis generator + anomaly explainer ─────────────────────
 
 
+# Kept for backward compatibility with cached payloads; not used in the
+# current Hypothesis shape. Older briefs may still reference it.
 class FalsifyingTest(BaseModel):
-    """A structured description of how to test (falsify) a hypothesis.
+    """Legacy nested falsifying-test descriptor.
 
-    Not executable directly; the UI shows it so the researcher can run it
-    themselves, and a future ``test_hypothesis`` runner can use it. Keep
-    the shape simple to make it model-friendly: both fields default to
-    empty so the agent's partial drafts don't fail validation.
+    The Hypothesis schema used to embed this object; the flatter v2 schema
+    uses plain strings instead because the model was struggling to populate
+    deeply nested arrays. Kept here so any persisted JSON from the old shape
+    still parses; new submissions use the flat ``falsifying_test`` string.
     """
 
-    description: str = Field(
-        default="",
-        description=(
-            "One sentence describing what would falsify the hypothesis, e.g. "
-            "'Compare 2022 and 2023 origin shares and confirm the second-largest "
-            "supplier dropped to zero.'"
-        ),
-    )
-    suggested_tools: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Tool names the runner would invoke. Examples: 'compare_periods', "
-            "'get_trade_anomalies', 'country_inbound_exposure'."
-        ),
-        max_length=6,
-    )
+    description: str = Field(default="")
+    suggested_tools: list[str] = Field(default_factory=list, max_length=6)
 
 
 class Hypothesis(BaseModel):
-    """A single candidate explanation for an observed pattern on a target."""
+    """A single candidate explanation for an observed pattern on a target.
+
+    Deliberately flat: no nested objects, no nested arrays of objects. The
+    model consistently fails to populate deeply nested tool-call args, so
+    every field here is a plain string or a list of plain strings. The
+    verifier still does its job because evidence is named in plain text
+    (the source_field names appear inline in the strings).
+    """
 
     headline: str = Field(
         description=(
@@ -322,8 +317,9 @@ class Hypothesis(BaseModel):
     )
     narrative: str = Field(
         description=(
-            "One to two paragraphs explaining the mechanism and the evidence "
-            "in the corpus that supports or contradicts it."
+            "One to two paragraphs explaining the mechanism, with the "
+            "supporting numbers cited inline (e.g. 'OCS rose from 0.45 to "
+            "0.5 between 2022 and 2023')."
         ),
     )
     confidence: Confidence = Field(
@@ -334,25 +330,38 @@ class Hypothesis(BaseModel):
             "speculative or contradicted."
         ),
     )
-    supporting_signals: list[CitedSignal] = Field(
+    supporting_evidence: list[str] = Field(
         default_factory=list,
-        description="Cited values from the corpus that support the hypothesis.",
+        description=(
+            "Up to 4 short bullet phrases naming the data signals that "
+            "support the hypothesis. Plain strings; reference source_field "
+            "names inline (e.g. 'OCS 0.5 (high band, near corpus median)')."
+        ),
         max_length=6,
     )
-    contradicting_signals: list[CitedSignal] = Field(
+    contradicting_evidence: list[str] = Field(
         default_factory=list,
-        description="Cited values that argue against the hypothesis.",
-        max_length=4,
+        description=(
+            "Up to 4 short bullet phrases naming data signals that argue "
+            "against the hypothesis. Empty when the hypothesis has no "
+            "counter-evidence in the corpus."
+        ),
+        max_length=6,
     )
-    falsifying_test: FalsifyingTest = Field(
-        default_factory=FalsifyingTest,
-        description="What would settle the question if we ran it.",
+    falsifying_test: str = Field(
+        default="",
+        description=(
+            "One sentence describing what would settle the question, "
+            "including the tool names a researcher could run. Example: "
+            "'Run compare_periods on 2022 vs 2023 and confirm the second-"
+            "largest supplier dropped to zero.'"
+        ),
     )
     next_data: str = Field(
         default="",
         description=(
-            "What additional data outside the corpus would clinch the answer. "
-            "Example: 'Shipping-route lineage data from a logistics provider'."
+            "Data outside the corpus that would clinch it. Example: "
+            "'Shipping-route lineage data from a logistics provider'."
         ),
     )
 
@@ -360,7 +369,11 @@ class Hypothesis(BaseModel):
 class HypothesisSet(BaseModel):
     """The agent's set of candidate explanations for a target lane.
 
-    Submitted via the ``submit_hypotheses`` forced tool.
+    Submitted via the ``submit_hypotheses`` forced tool. The ``hypotheses``
+    field is REQUIRED (no default) with ``min_length=2``, so the model sees
+    it in the JSON Schema's required list and is constrained to produce at
+    least 2 entries. The tool layer is a backstop that also rejects fewer
+    than 2.
     """
 
     target_label: str = Field(
@@ -376,13 +389,13 @@ class HypothesisSet(BaseModel):
         max_length=300,
     )
     hypotheses: list[Hypothesis] = Field(
-        default_factory=list,
         description=(
-            "Two to four candidate explanations, sorted by confidence. The "
-            "runner detects an empty list and reports a meaningful error to "
-            "the caller; do not produce an empty list intentionally."
+            "Two to four candidate explanations, sorted by confidence. THIS "
+            "ARRAY MUST BE NON-EMPTY. Submissions with fewer than 2 entries "
+            "are rejected at the tool layer."
         ),
-        max_length=6,
+        min_length=2,
+        max_length=4,
     )
     caveats: list[str] = Field(default_factory=list, max_length=6)
     verifier_notes: list[str] = Field(default_factory=list)
