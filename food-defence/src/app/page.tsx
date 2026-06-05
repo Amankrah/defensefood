@@ -8,14 +8,14 @@ import {
   Layers,
   Network,
   Scale,
-  Shield,
   ShieldCheck,
   TrendingUp,
 } from "lucide-react";
+import LogoMark from "@/components/shared/LogoMark";
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen bg-[var(--background)] text-slate-900">
       <BackgroundGlow />
 
       <SiteHeader />
@@ -38,12 +38,10 @@ export default function Home() {
 
 function SiteHeader() {
   return (
-    <header className="relative z-10 border-b border-slate-200/80 bg-white/70 backdrop-blur-md">
+    <header className="relative z-10 border-b border-slate-200/80 bg-white/80 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <Link href="/" className="flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-600/25">
-            <Shield size={18} strokeWidth={2.25} aria-hidden />
-          </span>
+          <LogoMark size={36} />
           <span className="text-sm font-semibold tracking-tight">DefenseFood</span>
         </Link>
         <nav className="flex items-center gap-2 text-sm">
@@ -96,7 +94,7 @@ function Hero() {
       <div className="mt-10 flex flex-wrap items-center gap-3">
         <Link
           href="/dashboard"
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-blue-600/25 transition hover:brightness-110"
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--brand)] px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:bg-[var(--brand-hover)]"
         >
           Open the priority queue
           <ArrowRight size={18} aria-hidden />
@@ -386,12 +384,15 @@ function Footer() {
   return (
     <footer className="border-t border-slate-200/80 bg-white/80 py-10 backdrop-blur">
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 sm:flex-row sm:items-center sm:justify-between">
-        <div>
+        <div className="flex items-start gap-3">
+          <LogoMark size={32} labeled />
+          <div>
           <p className="text-sm font-semibold text-slate-900">DefenseFood</p>
           <p className="mt-1 text-xs text-slate-500">
             Operational analytics for EU food fraud vulnerability, grounded in the
             published v1.0 mathematical framework.
           </p>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-500">
           <Link href="/dashboard" className="hover:text-slate-900">

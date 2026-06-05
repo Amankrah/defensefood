@@ -28,6 +28,10 @@ from defensefood.agent.briefs.lane_brief import (
     VerifyMode,
     generate_lane_brief,
 )
+from defensefood.agent.briefs.period_shift import (
+    PeriodShiftResult,
+    generate_period_shift_brief,
+)
 from defensefood.api.dependencies import AppState, get_state
 
 logger = logging.getLogger(__name__)
@@ -420,6 +424,207 @@ def country_brief(
         )
 
         yield _sse("final_brief", _country_result_to_dict(result))
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── period shift (Phase 3) ────────────────────────────────────────────────
+
+
+def _period_shift_to_dict(result: PeriodShiftResult) -> dict:
+    return result.model_dump(mode="json")
+
+
+@router.get("/period-shift")
+def period_shift(
+    period_b: int | None = Query(
+        None, description="Comparison year; defaults to the latest loaded period."
+    ),
+    period_a: int | None = Query(
+        None, description="Baseline year; defaults to the prior period."
+    ),
+    stream: bool = Query(False, description="Stream events as SSE."),
+    verify: Literal["strict", "fast", "off"] = Query(
+        "fast",
+        description="Reflection mode. fast (default) verifies + annotates; strict reruns on mismatch; off skips.",
+    ),
+    refresh: bool = Query(False, description="Bypass cache."),
+    only_cached: bool = Query(
+        False,
+        description=(
+            "When true, return the cached brief if present without invoking the "
+            "LLM. If no cache hit, return {cache_hit: false, needs_generation: true}."
+        ),
+    ),
+    state: AppState = Depends(get_state),
+):
+    """Corpus-wide period-shift diagnostic.
+
+    Cache key: ``(use_case='period_shift', target_key='{period_a}-{period_b}', snapshot_hash)``.
+    period_a and period_b default to the prior and latest loaded trade periods.
+    """
+    # Resolve target_key BEFORE computing anything else so cache lookups are
+    # cheap and deterministic. We resolve periods using the same logic as the
+    # generator so the cache key is stable.
+    from defensefood.agent.briefs.period_shift import _resolve_periods
+
+    pa, pb = _resolve_periods(state, period_b, period_a)
+    target_key = f"{pa}-{pb}"
+    snap = _state_snapshot_hash(state)
+
+    cached = (
+        None if refresh
+        else agent_cache.get_cached_brief("period_shift", target_key, snap)
+    )
+
+    # Available periods are useful in BOTH the cache-hit and cache-miss cases
+    # so the UI can render a selector regardless. They come from the same
+    # ground truth the resolver uses (state.dependency_history).
+    history = getattr(state, "dependency_history", None) or {}
+    available_periods = sorted(
+        int(p) for p, snap in history.items() if isinstance(snap, dict) and snap
+    )
+
+    if only_cached:
+        if cached:
+            return {
+                **cached["brief"],
+                "cache_hit": True,
+                "model": cached["model"],
+                "provider": cached["provider"],
+                "cost_usd": cached["cost_usd"],
+                "latency_ms": cached["latency_ms"],
+                "available_periods": available_periods,
+            }
+        return {
+            "cache_hit": False,
+            "needs_generation": True,
+            "target_key": target_key,
+            "snapshot_hash": snap,
+            "period_a": pa,
+            "period_b": pb,
+            "available_periods": available_periods,
+        }
+
+    if cached and not stream:
+        return {
+            **cached["brief"],
+            "cache_hit": True,
+            "model": cached["model"],
+            "provider": cached["provider"],
+            "cost_usd": cached["cost_usd"],
+            "latency_ms": cached["latency_ms"],
+        }
+
+    if not stream:
+        try:
+            result = generate_period_shift_brief(
+                state=state,
+                period_b=pb,
+                period_a=pa,
+                verify=verify,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+        brief_id = agent_cache.store_brief(
+            use_case="period_shift",
+            target_key=target_key,
+            snapshot_hash=snap,
+            brief=_period_shift_to_dict(result),
+            model=result.model,
+            provider=result.provider,
+            cost_usd=result.cost_usd,
+            latency_ms=result.latency_ms,
+        )
+        agent_cache.append_audit(
+            use_case="period_shift",
+            target_key=target_key,
+            role="assistant",
+            content={"brief": result.brief.model_dump(), "tool_trace": result.tool_trace},
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+            brief_id=brief_id,
+        )
+        agent_cache.record_cost(
+            use_case="period_shift",
+            provider=result.provider,
+            model=result.model,
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+            usd=result.cost_usd,
+        )
+        return _period_shift_to_dict(result)
+
+    async def event_stream() -> AsyncIterator[bytes]:
+        yield _sse(
+            "status",
+            {"phase": "starting", "target_key": target_key, "snapshot": snap},
+        )
+
+        if cached:
+            yield _sse("final_brief", cached["brief"] | {"cache_hit": True})
+            return
+
+        try:
+            result = generate_period_shift_brief(
+                state=state,
+                period_b=pb,
+                period_a=pa,
+                verify=verify,
+            )
+        except ValueError as exc:
+            yield _sse("error", {"message": str(exc), "code": 404})
+            return
+        except RuntimeError as exc:
+            yield _sse("error", {"message": str(exc), "code": 502})
+            return
+
+        for t in result.tool_trace:
+            yield _sse(
+                "tool_call",
+                {"name": t["name"], "args": t["args"], "latency_ms": t["latency_ms"]},
+            )
+            yield _sse("tool_result", {"name": t["name"], "result": t["result"]})
+
+        for note in result.brief.verifier_notes:
+            yield _sse("verifier_note", {"note": note})
+
+        brief_id = agent_cache.store_brief(
+            use_case="period_shift",
+            target_key=target_key,
+            snapshot_hash=snap,
+            brief=_period_shift_to_dict(result),
+            model=result.model,
+            provider=result.provider,
+            cost_usd=result.cost_usd,
+            latency_ms=result.latency_ms,
+        )
+        agent_cache.append_audit(
+            use_case="period_shift",
+            target_key=target_key,
+            role="assistant",
+            content={"brief": result.brief.model_dump(), "tool_trace": result.tool_trace},
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+            brief_id=brief_id,
+        )
+        agent_cache.record_cost(
+            use_case="period_shift",
+            provider=result.provider,
+            model=result.model,
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+            usd=result.cost_usd,
+        )
+
+        yield _sse("final_brief", _period_shift_to_dict(result))
 
     return StreamingResponse(
         event_stream(),

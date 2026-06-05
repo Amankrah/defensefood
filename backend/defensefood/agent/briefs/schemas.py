@@ -159,3 +159,121 @@ class CountryBrief(BaseModel):
             "behind the 'Show evidence' expander."
         ),
     )
+
+
+# ── Phase 3: period-shift diagnostic ──────────────────────────────────────
+
+
+Direction = Literal["rising", "falling", "stable"]
+
+
+class PeriodMover(BaseModel):
+    """A single corridor that moved between the two periods.
+
+    The agent picks 3 to 6 of these per category (risers / fallers / broken
+    stable) from the pre-loaded compare_corpus_periods output and references
+    them in the narrative.
+    """
+
+    lane_key: str = Field(
+        description="'hs/dest/origin' string. Used by the UI to make this clickable.",
+    )
+    label: str = Field(
+        description="Human label, e.g. 'Spain mussels into France'.",
+    )
+    cvs_a: Optional[float] = None
+    cvs_b: Optional[float] = None
+    cvs_delta: Optional[float] = Field(
+        default=None,
+        description="Signed CVS movement between period_a and period_b.",
+    )
+    notif_delta: Optional[int] = None
+    direction: Direction = "stable"
+    explanation: str = Field(
+        default="",
+        description=(
+            "One short sentence on what changed and why it matters. Plain "
+            "analyst voice, no em-dashes, no essay scaffolding."
+        ),
+    )
+
+
+class PeriodCluster(BaseModel):
+    """A group of corridors that moved together between the two periods."""
+
+    cluster_label: str = Field(
+        description=(
+            "Human label, e.g. 'Mussels into France' (commodity chapter + "
+            "destination) or 'Indian rice exports'."
+        ),
+    )
+    lane_count: int
+    mean_movement: float = Field(
+        description="Average signed movement across the cluster's lanes.",
+    )
+    criterion: str = Field(
+        description="Which delta defined the cluster: cvs_delta / notif_delta / etc.",
+    )
+    lane_keys: list[str] = Field(
+        default_factory=list,
+        description="Up to 5 'hs/dest/origin' anchors.",
+        max_length=5,
+    )
+    explanation: str = Field(
+        default="",
+        description="One sentence on what the cluster represents.",
+    )
+
+
+class PeriodShiftBrief(BaseModel):
+    """Structured output for the corpus-wide period-shift diagnostic.
+
+    Compares the latest loaded period against the prior period and surfaces
+    the corridors and clusters that moved. The dashboard tile renders this
+    plus a clickable list of movers; the priority queue stays below it.
+    """
+
+    headline: str = Field(
+        description=(
+            "One sentence summary of the period shift, under 30 words. "
+            "Example: 'Comparing 2023 to 2022, 47 corridors moved up and 33 down, "
+            "with mussels into France the strongest emerging cluster.'"
+        ),
+        max_length=300,
+    )
+    body_markdown: str = Field(
+        description=(
+            "Two short paragraphs: first paragraph is the corpus-level summary "
+            "(totals, median delta, broad direction). Second paragraph names "
+            "the strongest single mover or cluster and explains the change."
+        ),
+    )
+    period_a: int
+    period_b: int
+    top_risers: list[PeriodMover] = Field(
+        default_factory=list,
+        description="Corridors with the largest positive CVS deltas.",
+        max_length=6,
+    )
+    top_fallers: list[PeriodMover] = Field(
+        default_factory=list,
+        description="Corridors with the largest negative CVS deltas.",
+        max_length=6,
+    )
+    emerging_clusters: list[PeriodCluster] = Field(
+        default_factory=list,
+        description="Commodity-origin clusters that moved together.",
+        max_length=4,
+    )
+    key_signals: list[CitedSignal] = Field(
+        default_factory=list,
+        description=(
+            "Every numerical claim in the body, paired with a source field. "
+            "For corpus aggregates use source_field='corpus_total' / "
+            "'corpus_median' / 'corpus_risers' etc."
+        ),
+        max_length=10,
+    )
+    caveats: list[str] = Field(default_factory=list, max_length=6)
+    confidence: Confidence = "med"
+    verifier_notes: list[str] = Field(default_factory=list)

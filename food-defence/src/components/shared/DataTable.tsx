@@ -7,7 +7,6 @@ import { fmt } from "@/lib/utils";
 export interface Column<T> {
   key: string;
   label: string;
-  /** Shown on header hover: what the number means for decisions */
   headerDescription?: string;
   type?: "string" | "number";
   render?: (row: T) => React.ReactNode;
@@ -87,27 +86,27 @@ export default function DataTable<T extends Record<string, any>>({
       {searchKeys.length > 0 && (
         <input
           type="text"
-          placeholder="Search..."
+          placeholder="Search…"
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
             setPage(0);
           }}
-          className="mb-3 w-full max-w-xs px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+          className="mb-3 w-full max-w-xs rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
         />
       )}
 
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto rounded-lg border border-slate-100">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-gray-200 text-left">
+            <tr className="border-b border-slate-100 bg-slate-50/80 text-left">
               {columns.map((col) => (
                 <th
                   key={col.key}
                   title={col.headerDescription}
-                  className={`pb-2.5 pr-3 font-medium text-gray-500 text-xs ${
+                  className={`px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500 ${
                     col.type === "number" ? "text-right" : ""
-                  } ${col.sortable !== false ? "cursor-pointer select-none hover:text-gray-700" : ""} ${col.className ?? ""}`}
+                  } ${col.sortable !== false ? "cursor-pointer select-none hover:text-slate-800" : ""} ${col.className ?? ""}`}
                   onClick={() => col.sortable !== false && toggleSort(col.key)}
                 >
                   <span className="inline-flex items-center gap-1">
@@ -123,31 +122,31 @@ export default function DataTable<T extends Record<string, any>>({
               ))}
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-slate-50">
             {paged.map((row, i) => (
               <tr
                 key={i}
-                className={`border-b border-gray-100 ${
+                className={`bg-white transition-colors ${
                   onRowClick
-                    ? "cursor-pointer hover:bg-blue-50/50"
-                    : "hover:bg-gray-50"
+                    ? "cursor-pointer hover:bg-blue-50/40"
+                    : "hover:bg-slate-50/60"
                 }`}
                 onClick={() => onRowClick?.(row)}
               >
                 {columns.map((col) => (
                   <td
                     key={col.key}
-                    className={`py-2 pr-3 ${
+                    className={`px-3 py-2.5 ${
                       col.type === "number"
-                        ? "text-right font-mono text-gray-700"
-                        : "text-gray-800"
+                        ? "text-right font-mono text-slate-700"
+                        : "text-slate-800"
                     } ${col.className ?? ""}`}
                   >
                     {col.render
                       ? col.render(row)
                       : col.type === "number"
-                      ? fmt(row[col.key] as number)
-                      : String(row[col.key] ?? "")}
+                        ? fmt(row[col.key] as number)
+                        : String(row[col.key] ?? "")}
                   </td>
                 ))}
               </tr>
@@ -157,22 +156,24 @@ export default function DataTable<T extends Record<string, any>>({
       </div>
 
       {totalPages > 1 && (
-        <div className="flex items-center justify-between mt-3 text-xs text-gray-500">
+        <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
           <span>
-            {sorted.length} results, page {page + 1} of {totalPages}
+            {sorted.length} results · page {page + 1} of {totalPages}
           </span>
           <div className="flex gap-1">
             <button
+              type="button"
               onClick={() => setPage(Math.max(0, page - 1))}
               disabled={page === 0}
-              className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
+              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 transition hover:bg-slate-50 disabled:opacity-40"
             >
               Prev
             </button>
             <button
+              type="button"
               onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
               disabled={page >= totalPages - 1}
-              className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
+              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 transition hover:bg-slate-50 disabled:opacity-40"
             >
               Next
             </button>

@@ -106,7 +106,8 @@ export type AgentEvent =
       kind: "final_brief";
       response:
         | (LaneBriefResponse & { cache_hit?: boolean })
-        | (CountryBriefResponse & { cache_hit?: boolean });
+        | (CountryBriefResponse & { cache_hit?: boolean })
+        | (PeriodShiftResponse & { cache_hit?: boolean });
     }
   | { kind: "error"; message: string; code: number };
 
@@ -334,6 +335,196 @@ export async function fetchTodayCosts(): Promise<{ rows: CostLedgerRow[] }> {
   const res = await fetch(`${API_BASE}/agent/costs/today`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Costs ${res.status}`);
   return res.json();
+}
+
+// ── period shift (Phase 3) ────────────────────────────────────────────────
+
+export type Direction = "rising" | "falling" | "stable";
+
+export interface PeriodMover {
+  lane_key: string;
+  label: string;
+  cvs_a: number | null;
+  cvs_b: number | null;
+  cvs_delta: number | null;
+  notif_delta: number | null;
+  direction: Direction;
+  explanation: string;
+}
+
+export interface PeriodCluster {
+  cluster_label: string;
+  lane_count: number;
+  mean_movement: number;
+  criterion: string;
+  lane_keys: string[];
+  explanation: string;
+}
+
+export interface PeriodShiftBrief {
+  headline: string;
+  body_markdown: string;
+  period_a: number;
+  period_b: number;
+  top_risers: PeriodMover[];
+  top_fallers: PeriodMover[];
+  emerging_clusters: PeriodCluster[];
+  key_signals: CitedSignal[];
+  caveats: string[];
+  confidence: Confidence;
+  verifier_notes: string[];
+}
+
+export interface PeriodShiftResponse {
+  brief: PeriodShiftBrief;
+  period_a: number;
+  period_b: number;
+  provider: string;
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  latency_ms: number;
+  cache_hit: boolean;
+  tool_trace: ToolTrace[];
+}
+
+export type PeriodShiftProbe =
+  | {
+      cached: true;
+      response: PeriodShiftResponse;
+      available_periods: number[];
+    }
+  | {
+      cached: false;
+      needs_generation: true;
+      target_key: string;
+      snapshot_hash: string;
+      period_a: number;
+      period_b: number;
+      available_periods: number[];
+    };
+
+export async function probePeriodShift(opts?: {
+  period_a?: number;
+  period_b?: number;
+}): Promise<PeriodShiftProbe> {
+  const params = new URLSearchParams();
+  params.set("only_cached", "true");
+  if (opts?.period_a) params.set("period_a", String(opts.period_a));
+  if (opts?.period_b) params.set("period_b", String(opts.period_b));
+  const res = await fetch(
+    `${API_BASE}/agent/period-shift?${params.toString()}`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) throw new Error(`Period shift probe ${res.status}: ${res.statusText}`);
+  const body = (await res.json()) as Record<string, unknown>;
+  const available_periods = Array.isArray(body.available_periods)
+    ? (body.available_periods as number[])
+    : [];
+  if (body.cache_hit === false && body.needs_generation === true) {
+    return {
+      cached: false,
+      needs_generation: true,
+      target_key: String(body.target_key ?? ""),
+      snapshot_hash: String(body.snapshot_hash ?? ""),
+      period_a: Number(body.period_a ?? 0),
+      period_b: Number(body.period_b ?? 0),
+      available_periods,
+    };
+  }
+  return {
+    cached: true,
+    response: body as unknown as PeriodShiftResponse,
+    available_periods,
+  };
+}
+
+export async function fetchPeriodShift(opts?: {
+  period_a?: number;
+  period_b?: number;
+  verify?: VerifyMode;
+  refresh?: boolean;
+}): Promise<PeriodShiftResponse> {
+  const params = new URLSearchParams();
+  if (opts?.period_a) params.set("period_a", String(opts.period_a));
+  if (opts?.period_b) params.set("period_b", String(opts.period_b));
+  if (opts?.verify) params.set("verify", opts.verify);
+  if (opts?.refresh) params.set("refresh", "true");
+  const qs = params.toString();
+  const url = `${API_BASE}/agent/period-shift${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (body.detail) detail = body.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`Period shift ${res.status}: ${detail}`);
+  }
+  return res.json();
+}
+
+export async function* streamPeriodShift(
+  opts: {
+    period_a?: number;
+    period_b?: number;
+    verify?: VerifyMode;
+    refresh?: boolean;
+    signal?: AbortSignal;
+  } = {}
+): AsyncGenerator<AgentEvent, void, void> {
+  const params = new URLSearchParams();
+  params.set("stream", "true");
+  if (opts.period_a) params.set("period_a", String(opts.period_a));
+  if (opts.period_b) params.set("period_b", String(opts.period_b));
+  if (opts.verify) params.set("verify", opts.verify);
+  if (opts.refresh) params.set("refresh", "true");
+  const url = `${API_BASE}/agent/period-shift?${params.toString()}`;
+
+  const res = await fetch(url, {
+    cache: "no-store",
+    headers: { Accept: "text/event-stream" },
+    signal: opts.signal,
+  });
+  if (!res.ok || !res.body) {
+    yield {
+      kind: "error",
+      message: `HTTP ${res.status}: ${res.statusText}`,
+      code: res.status,
+    };
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const parsed = parseSseFrame(raw);
+        if (parsed) yield parsed;
+      }
+    }
+  } catch (e) {
+    if ((e as { name?: string }).name === "AbortError") return;
+    throw e;
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* noop */
+    }
+  }
 }
 
 // ── country brief streamer + fetch ────────────────────────────────────────

@@ -163,7 +163,7 @@ export default function CountrySnapshot() {
             "Aggregate hazard- and dependency-weighted exposure reaching this country."
           }
           icon={Shield}
-          color="bg-purple-500"
+          tone="info"
           footer={
             acep && (acep.crs_resolved_count != null || acep.bdi_missing_inbound != null) ? (
               <span title={

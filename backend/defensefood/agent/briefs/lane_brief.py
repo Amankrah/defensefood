@@ -185,15 +185,32 @@ def _preload_lane_context(
     if bands:
         out["metric_bands"] = bands
 
-    # 4. Period comparison only when multi-year data is available.
-    periods = corridor.get("trade_periods") or []
-    if isinstance(periods, list) and len(periods) >= 2:
+    # 4. Period comparison only when this lane has dependency snapshots in
+    #    two or more periods. Use state.dependency_history (the ground truth),
+    #    not a non-existent per-corridor 'trade_periods' field.
+    history = getattr(state, "dependency_history", None) or {}
+    try:
+        key = (str(hs), int(dest), int(origin))
+    except (TypeError, ValueError):
+        key = None
+    lane_periods: list[int] = []
+    if key is not None:
+        for period, snap in history.items():
+            if isinstance(snap, dict) and snap.get(key) is not None:
+                try:
+                    lane_periods.append(int(period))
+                except (TypeError, ValueError):
+                    continue
+    lane_periods.sort()
+    if len(lane_periods) >= 2:
+        prior, latest = lane_periods[-2], lane_periods[-1]
         try:
-            latest, prior = sorted(periods)[-1], sorted(periods)[-2]
             cmp_call = invoke_tool(
                 "compare_periods",
                 {
-                    "corridor_key": f"{hs}/{dest}/{origin}",
+                    "commodity_hs": str(hs),
+                    "destination_m49": int(dest),
+                    "origin_m49": int(origin),
                     "period_a": int(prior),
                     "period_b": int(latest),
                 },

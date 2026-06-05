@@ -2,10 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import {
   AlertTriangle,
-  ArrowRight,
   Boxes,
   Globe,
   Network,
@@ -22,6 +20,10 @@ import type {
 import { fmt, fmtInt, riskColor, truncate } from "@/lib/utils";
 import MetricCard from "@/components/shared/MetricCard";
 import DataTable, { type Column } from "@/components/shared/DataTable";
+import PeriodShiftCard from "@/components/shared/PeriodShiftCard";
+import PageHeader from "@/components/layout/PageHeader";
+import SectionCard from "@/components/layout/SectionCard";
+import QuickNavCard from "@/components/layout/QuickNavCard";
 import { whyLine } from "@/lib/whyLine";
 import { actionFor } from "@/lib/actionHint";
 
@@ -155,6 +157,17 @@ function aggregateHazardFamilies(rows: CorridorMetric[]): {
     .sort((a, b) => b.count - a.count);
 }
 
+function StatChip({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-lg border border-slate-200/80 bg-white px-3 py-2 text-right shadow-sm">
+      <p className="font-mono text-lg font-semibold text-slate-900">{value}</p>
+      <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+        {label}
+      </p>
+    </div>
+  );
+}
+
 export default function Today() {
   const router = useRouter();
   const [summary, setSummary] = useState<RasffSummary | null>(null);
@@ -225,7 +238,7 @@ export default function Today() {
 
   if (error) {
     return (
-      <div className="rounded-2xl border border-red-200/90 bg-red-50/90 p-6 shadow-sm backdrop-blur">
+      <div className="df-card border-red-200/90 bg-red-50/50 p-6">
         <AlertTriangle className="mb-2 text-red-500" size={24} aria-hidden />
         <p className="font-medium text-red-900">API connection error</p>
         <p className="mt-1 text-sm text-red-700">{error}</p>
@@ -240,98 +253,84 @@ export default function Today() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-600/90">
-            Inspection planner
-          </p>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Today
-          </h1>
-          <p className="mt-1 max-w-xl text-sm text-slate-600">
-            The lanes that should get your sampling and inspection capacity this
-            period. Each row carries a plain-language reason and a suggested
-            next step — confirm with your own controls before acting.
-          </p>
+    <div className="space-y-8">
+      <PageHeader
+        eyebrow="Research diagnostic"
+        title="Latest period overview"
+        description="Corpus-wide view of lane priorities, period-over-period movement, and hazard rollups. Trade and FAOSTAT data lag 1–2 years — a research and forensic tool, not an operational planner."
+        meta={
+          <>
+            <StatChip label="Corridors" value={allCorridors.length} />
+            <StatChip
+              label="RASFF alerts"
+              value={fmtInt(summary?.total_notifications ?? 0)}
+            />
+          </>
+        }
+      />
+
+      {/* KPI strip — scan first */}
+      <section aria-label="Key indicators">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <MetricCard
+            label={
+              cvsAvailable
+                ? "Lanes above review threshold"
+                : "High-hazard lanes (HIS ≥ 0.5)"
+            }
+            value={
+              cvsAvailable
+                ? highPriority
+                : allCorridors.filter((c) => c.his >= 0.5).length
+            }
+            icon={AlertTriangle}
+            tone="danger"
+            subtext={
+              cvsAvailable
+                ? "Priority score ≥ 0.5 — warrant closer inspection this period."
+                : "Alert pattern strong enough to warrant follow-up regardless of supply context."
+            }
+          />
+          <MetricCard
+            label="Single-source lanes"
+            value={concentrated}
+            icon={Network}
+            tone="warning"
+            subtext={`Supplier concentration ≥ 0.25 — limited fallback. Out of ${depCorridors.length} with a dependency profile.`}
+          />
+          <MetricCard
+            label="No domestic cushion"
+            value={noFallback}
+            icon={Boxes}
+            tone="caution"
+            subtext="Imports exceed apparent supply, or local production is near zero."
+          />
         </div>
-        <div className="text-right text-[11px] text-slate-500">
-          <p>
-            <span className="font-mono font-semibold text-slate-700">
-              {allCorridors.length}
-            </span>{" "}
-            corridors loaded
-          </p>
-          <p>
-            <span className="font-mono font-semibold text-slate-700">
-              {fmtInt(summary?.total_notifications ?? 0)}
-            </span>{" "}
-            RASFF alerts in window
-          </p>
-        </div>
-      </div>
+      </section>
+
+      {/* AI period-shift narrative */}
+      <PeriodShiftCard />
 
       {!cvsAvailable && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-          <span className="font-semibold">Hazard-only ranking.</span> The
-          combined priority score (CVS) blends supply criticality (SCI) and
-          consumption rank (CRS) with hazard intensity (HIS). Until bilateral
-          trade and consumption data are loaded for every lane, the queue is
-          sorted by hazard intensity alone.
+        <div
+          role="status"
+          className="rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-xs text-amber-900"
+        >
+          <span className="font-semibold">Hazard-only ranking.</span> Combined
+          priority (CVS) blends supply criticality, consumption rank, and hazard
+          intensity. Until bilateral trade data loads for every lane, the queue
+          sorts by hazard intensity alone.
         </div>
       )}
 
-      {/* KPI tiles — three numbers a planner cares about. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <MetricCard
-          label={cvsAvailable ? "Lanes above review threshold" : "High-hazard lanes (HIS ≥ 0.5)"}
-          value={cvsAvailable ? highPriority : allCorridors.filter((c) => c.his >= 0.5).length}
-          icon={AlertTriangle}
-          color="bg-red-500"
-          subtext={
-            cvsAvailable
-              ? "Priority score ≥ 0.5 — these should get a closer look this period."
-              : "Alert pattern strong enough to warrant follow-up regardless of supply context."
-          }
-        />
-        <MetricCard
-          label="Single-source lanes"
-          value={concentrated}
-          icon={Network}
-          color="bg-orange-500"
-          subtext={`Supplier concentration ≥ 0.25 — limited fallback if one supplier fails. Out of ${depCorridors.length} with a dependency profile.`}
-        />
-        <MetricCard
-          label="No domestic cushion"
-          value={noFallback}
-          icon={Boxes}
-          color="bg-amber-500"
-          subtext="Imports exceed apparent supply, or local production is essentially zero. Disruption-sensitive."
-        />
-      </div>
-
-      {/* Priority queue (hero). */}
-      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm">
-        <div className="mb-3 flex items-baseline justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900">
-              Top priority lanes this period
-            </h2>
-            <p className="mt-0.5 text-xs text-slate-500">
-              Ranked by{" "}
-              {cvsAvailable ? "combined priority score (CVS)" : "hazard intensity (HIS)"}{" "}
-              · top {priorityRows.length} of {allCorridors.length} · click a row
-              for the full forensic report.
-            </p>
-          </div>
-          <Link
-            href="/dashboard/corridors"
-            className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800"
-          >
-            See all corridors <ArrowRight size={12} aria-hidden />
-          </Link>
-        </div>
+      {/* Priority queue — primary action surface */}
+      <SectionCard
+        title="Top priority lanes"
+        description={`Ranked by ${cvsAvailable ? "combined priority (CVS)" : "hazard intensity (HIS)"} · top ${priorityRows.length} of ${allCorridors.length} · click a row for the full forensic report.`}
+        href="/dashboard/corridors"
+        hrefLabel="All corridors"
+        variant="featured"
+      >
         <DataTable
           columns={PRIORITY_COLS}
           data={priorityRows}
@@ -342,92 +341,78 @@ export default function Today() {
           }
           pageSize={10}
         />
-      </section>
+      </SectionCard>
 
-      {/* Two-column summary: structural exposure + hazard activity. */}
+      {/* Context panels */}
       <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        {/* Structural exposure */}
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm">
-          <div className="mb-1 flex items-center gap-2">
-            <Boxes size={15} className="text-blue-600" aria-hidden />
-            <h2 className="text-sm font-semibold text-slate-900">
-              Structural exposure
-            </h2>
-          </div>
-          <p className="mb-4 text-[11px] text-slate-500">
-            How exposed supply would be if a lane were disrupted — independent
-            of whether RASFF has flagged anything.
-          </p>
-
+        <SectionCard
+          title="Structural exposure"
+          description="How exposed supply would be if a lane were disrupted — independent of RASFF flags."
+          icon={Boxes}
+          iconClassName="text-blue-600"
+          href="/dashboard/corridors?sort_by=sci"
+          hrefLabel="Sort by criticality"
+        >
           {topSci.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500">
+            <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-xs text-slate-500">
               Dependency metrics need bilateral trade data. Run the all-partners
               Comtrade fetch and restart the API to populate this section.
             </p>
           ) : (
-            <>
-              <ul className="divide-y divide-slate-100 text-sm">
-                {topSci.map((c) => (
-                  <li key={`${c.commodity_hs}-${c.destination_m49}-${c.origin_m49}`}>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        router.push(
-                          `/dashboard/corridors/${c.commodity_hs}/${c.destination_m49}/${c.origin_m49}`
-                        )
-                      }
-                      className="grid w-full grid-cols-[1fr_auto] items-baseline gap-3 py-2 text-left hover:bg-slate-50"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-medium text-slate-800">
-                          {c.origin_country} → {c.destination_country}
-                        </p>
-                        <p className="truncate text-[10px] text-slate-500">
-                          {truncate(c.commodity_name, 36)}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className={`font-mono text-sm font-semibold ${riskColor(c.sci ?? 0, 1.5)}`}>
-                          {fmt(c.sci ?? 0)}
-                        </p>
-                        <p className="text-[9px] uppercase tracking-wide text-slate-400">
-                          criticality
-                        </p>
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <Link
-                href="/dashboard/corridors?sort_by=sci"
-                className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800"
-              >
-                Sort all corridors by criticality <ArrowRight size={12} aria-hidden />
-              </Link>
-            </>
+            <ul className="divide-y divide-slate-100">
+              {topSci.map((c) => (
+                <li key={`${c.commodity_hs}-${c.destination_m49}-${c.origin_m49}`}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      router.push(
+                        `/dashboard/corridors/${c.commodity_hs}/${c.destination_m49}/${c.origin_m49}`
+                      )
+                    }
+                    className="grid w-full grid-cols-[1fr_auto] items-baseline gap-3 rounded-lg py-2.5 text-left transition hover:bg-slate-50"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-medium text-slate-800">
+                        {c.origin_country} → {c.destination_country}
+                      </p>
+                      <p className="truncate text-[10px] text-slate-500">
+                        {truncate(c.commodity_name, 36)}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p
+                        className={`font-mono text-sm font-semibold ${riskColor(c.sci ?? 0, 1.5)}`}
+                      >
+                        {fmt(c.sci ?? 0)}
+                      </p>
+                      <p className="text-[9px] uppercase tracking-wide text-slate-400">
+                        criticality
+                      </p>
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
-        </div>
+        </SectionCard>
 
-        {/* Hazard activity */}
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm">
-          <div className="mb-1 flex items-center gap-2">
-            <AlertTriangle size={15} className="text-red-500" aria-hidden />
-            <h2 className="text-sm font-semibold text-slate-900">
-              Hazard activity
-            </h2>
-          </div>
-          <p className="mb-4 text-[11px] text-slate-500">
-            What official RASFF notifications are saying right now.
-          </p>
-
+        <SectionCard
+          title="Hazard activity"
+          description="What official RASFF notifications are saying in the loaded window."
+          icon={AlertTriangle}
+          iconClassName="text-red-500"
+        >
           {hazardFamilies.length === 0 ? (
-            <p className="text-xs text-slate-500">No categorised RASFF data in window.</p>
+            <p className="text-xs text-slate-500">
+              No categorised RASFF data in window.
+            </p>
           ) : (
             <>
-              <p className="mb-2 text-[11px] font-medium text-slate-600">
-                Hazard families across {fmtInt(summary?.total_notifications ?? 0)} alerts
+              <p className="mb-3 text-[11px] font-medium text-slate-600">
+                Hazard families across{" "}
+                {fmtInt(summary?.total_notifications ?? 0)} alerts
               </p>
-              <ul className="mb-4 space-y-1.5">
+              <ul className="mb-5 space-y-2">
                 {hazardFamilies.map((f) => {
                   const pct = (f.count / totalFamilyCount) * 100;
                   return (
@@ -438,9 +423,9 @@ export default function Today() {
                           {fmt(f.count, 0)} ({pct.toFixed(0)}%)
                         </span>
                       </div>
-                      <div className="mt-0.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
                         <div
-                          className="h-full bg-red-400"
+                          className="h-full rounded-full bg-gradient-to-r from-red-400 to-red-500"
                           style={{ width: `${pct}%` }}
                         />
                       </div>
@@ -462,7 +447,7 @@ export default function Today() {
                           onClick={() =>
                             router.push(`/dashboard/countries/${o.origin_m49}`)
                           }
-                          className="flex w-full items-center justify-between gap-2 rounded-md border border-slate-100 bg-slate-50/80 px-2 py-1.5 text-left text-xs transition hover:border-slate-200 hover:bg-slate-50"
+                          className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50/80 px-2.5 py-2 text-left text-xs transition hover:border-slate-200 hover:bg-white"
                         >
                           <span className="truncate text-slate-800">
                             {o.name || o.origin_m49}
@@ -478,55 +463,34 @@ export default function Today() {
               )}
             </>
           )}
-        </div>
+        </SectionCard>
       </section>
 
-      {/* Deeper exploration links */}
-      <section className="rounded-2xl border border-slate-200/70 bg-slate-50/50 px-5 py-4">
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-          Look deeper
-        </p>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <Link
+      {/* Exploration shortcuts */}
+      <section>
+        <p className="df-eyebrow mb-3">Explore further</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <QuickNavCard
             href="/dashboard/corridors"
-            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:border-blue-300 hover:bg-blue-50"
-          >
-            <Search size={14} className="text-blue-600" aria-hidden />
-            <span>
-              <span className="block font-medium text-slate-900">
-                Investigate corridors
-              </span>
-              <span className="text-[10px] text-slate-500">
-                Filter every lane, export to CSV
-              </span>
-            </span>
-          </Link>
-          <Link
+            icon={Search}
+            title="Investigate corridors"
+            description="Filter every lane, export to CSV"
+            accent="blue"
+          />
+          <QuickNavCard
             href="/dashboard/patterns"
-            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:border-blue-300 hover:bg-blue-50"
-          >
-            <Sparkles size={14} className="text-blue-600" aria-hidden />
-            <span>
-              <span className="block font-medium text-slate-900">Patterns</span>
-              <span className="text-[10px] text-slate-500">
-                Heatmap and scoring weights
-              </span>
-            </span>
-          </Link>
-          <Link
+            icon={Sparkles}
+            title="Patterns"
+            description="Heatmap and scoring weights"
+            accent="violet"
+          />
+          <QuickNavCard
             href="/dashboard/network"
-            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:border-blue-300 hover:bg-blue-50"
-          >
-            <Globe size={14} className="text-blue-600" aria-hidden />
-            <span>
-              <span className="block font-medium text-slate-900">
-                Trade network
-              </span>
-              <span className="text-[10px] text-slate-500">
-                Country graph
-              </span>
-            </span>
-          </Link>
+            icon={Globe}
+            title="Trade network"
+            description="Country exposure graph"
+            accent="teal"
+          />
         </div>
       </section>
     </div>

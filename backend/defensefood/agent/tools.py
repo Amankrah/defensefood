@@ -28,6 +28,7 @@ from typing import (
     Any,
     Callable,
     Generic,
+    Literal,
     Optional,
     Protocol,
     TypeVar,
@@ -489,6 +490,337 @@ class CoverageArgs(BaseModel):
 def get_data_coverage(args: CoverageArgs, *, state: Any) -> dict[str, Any]:
     """Return the cached coverage dict (computed at startup)."""
     return dict(state.coverage) if isinstance(state.coverage, dict) else {"empty": True}
+
+
+# ── Phase 3: corpus-wide period shift tools ───────────────────────────────
+
+
+class CompareCorpusPeriodsArgs(BaseModel):
+    period_a: int = Field(description="Baseline year, e.g. 2022.")
+    period_b: int = Field(description="Comparison year, e.g. 2023.")
+    top_n: int = Field(
+        default=15,
+        description="Cap on returned corridors; sorted by |cvs_delta| descending.",
+    )
+    min_notification_count: int = Field(
+        default=0,
+        description=(
+            "Optional: only include corridors with at least this many notifications "
+            "in either period. Useful to focus on lanes with real signal."
+        ),
+    )
+
+
+@tool(description="Corpus-wide period shift: per-corridor BDI/OCS/HHI/IDR/notification deltas between two years. Pre-computes the dataset the period-shift brief needs.")
+def compare_corpus_periods(
+    args: CompareCorpusPeriodsArgs, *, state: Any
+) -> dict[str, Any]:
+    """Compute per-corridor deltas by direct lookup against state.dependency_history.
+
+    ``state.dependency_history`` is built at startup as ``{period: {(hs, dest,
+    origin): metric_dict}}`` for every period in the trade corpus. We look up
+    each corridor in both periods directly and compute deltas where both are
+    present.
+
+    Returns a dict shaped like::
+
+        {
+            "period_a": 2022,
+            "period_b": 2023,
+            "totals": {
+                "corridors_compared": 412,
+                "corridors_in_a_only": 18,
+                "corridors_in_b_only": 22,
+                "available_periods": [2018, ..., 2023],
+                "risers": 47, "fallers": 33, "stable": 332,
+                "median_cvs_delta": 0.001,
+            },
+            "top_movers": [ ... ]
+        }
+    """
+
+    def _to_float(v: Any) -> Optional[float]:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        import math
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return f
+
+    history = getattr(state, "dependency_history", None) or {}
+    available_periods = sorted(int(p) for p in history.keys())
+
+    snap_a = history.get(int(args.period_a)) or {}
+    snap_b = history.get(int(args.period_b)) or {}
+
+    # Pre-build per-lane, per-year notification counts so we can attach real
+    # notif_a / notif_b deltas. dependency_history snapshots do NOT include
+    # notification_count (the dependency pipeline only computes Section 2).
+    # RASFF notification periods are encoded as YYYY*100 + month, so the
+    # year is period // 100.
+    notif_by_lane_year: dict[tuple[Any, int, int], dict[int, int]] = {}
+    for lane_key, rows_for_lane in (
+        getattr(state, "notifications_by_corridor", None) or {}
+    ).items():
+        counts: dict[int, int] = {}
+        for r in rows_for_lane or []:
+            try:
+                p_raw = int(r.get("period") or 0)
+            except (TypeError, ValueError):
+                continue
+            if p_raw <= 0:
+                continue
+            # Heuristic: if period > 100000, it's YYYYMM; if smaller, it's
+            # already YYYY.
+            year = p_raw // 100 if p_raw >= 100000 else p_raw
+            counts[year] = counts.get(year, 0) + 1
+        if counts:
+            notif_by_lane_year[lane_key] = counts
+
+    rows: list[dict[str, Any]] = []
+    risers = fallers = stable = 0
+    in_a_only = in_b_only = 0
+
+    for c in state.corridor_metrics:
+        # Build the lookup key. dependency_history keys are tuples that match
+        # corridor_metrics field types verbatim (built in dependencies.py).
+        try:
+            key = (
+                c["commodity_hs"],
+                int(c["destination_m49"]),
+                int(c["origin_m49"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        a = snap_a.get(key)
+        b = snap_b.get(key)
+        if a is None and b is None:
+            continue
+        if a is None:
+            in_b_only += 1
+            continue
+        if b is None:
+            in_a_only += 1
+            continue
+
+        if args.min_notification_count > 0:
+            nc = int(c.get("notification_count") or 0)
+            if nc < args.min_notification_count:
+                continue
+
+        cvs_a = _to_float(a.get("cvs"))
+        cvs_b = _to_float(b.get("cvs"))
+        cvs_delta = (cvs_b - cvs_a) if (cvs_a is not None and cvs_b is not None) else None
+
+        # Notification counts come from the RASFF index (not the dependency
+        # snapshot — that pipeline only computes Section 2 structural metrics).
+        lane_notifs = notif_by_lane_year.get(key, {})
+        notif_a = int(lane_notifs.get(int(args.period_a), 0))
+        notif_b = int(lane_notifs.get(int(args.period_b), 0))
+
+        structural: dict[str, Optional[float]] = {}
+        for k in ("bdi", "ocs", "hhi", "idr", "sci", "his"):
+            va, vb = _to_float(a.get(k)), _to_float(b.get(k))
+            structural[k] = (
+                round(vb - va, 4)
+                if (va is not None and vb is not None)
+                else None
+            )
+
+        # Classification: CVS delta is the primary signal when available;
+        # fall back to notification delta + structural composite when not.
+        direction = "stable"
+        notif_delta = notif_b - notif_a
+        sci_delta = structural.get("sci")
+        composite_proxy = None
+        if cvs_delta is not None:
+            composite_proxy = cvs_delta
+        elif notif_delta or (sci_delta is not None and abs(sci_delta) > 0.1):
+            # Light proxy: half the structural SCI shift plus a notification term.
+            composite_proxy = (sci_delta or 0.0) * 0.3 + (notif_delta * 0.02)
+
+        if composite_proxy is not None:
+            if composite_proxy > 0.03:
+                direction = "rising"
+                risers += 1
+            elif composite_proxy < -0.03:
+                direction = "falling"
+                fallers += 1
+            else:
+                stable += 1
+        else:
+            stable += 1
+
+        rows.append(
+            {
+                "commodity_hs": c.get("commodity_hs"),
+                "destination_m49": c.get("destination_m49"),
+                "origin_m49": c.get("origin_m49"),
+                "origin_country": c.get("origin_country"),
+                "destination_country": c.get("destination_country"),
+                "commodity_name": c.get("commodity_name"),
+                "commodity_chapter": (
+                    str(c.get("commodity_hs") or "")[:2]
+                    if c.get("commodity_hs")
+                    else None
+                ),
+                "cvs_a": round(cvs_a, 4) if cvs_a is not None else None,
+                "cvs_b": round(cvs_b, 4) if cvs_b is not None else None,
+                "cvs_delta": round(cvs_delta, 4) if cvs_delta is not None else None,
+                "composite_proxy_delta": (
+                    round(composite_proxy, 4) if composite_proxy is not None else None
+                ),
+                "notif_a": notif_a,
+                "notif_b": notif_b,
+                "notif_delta": notif_b - notif_a,
+                "structural_deltas": structural,
+                "direction": direction,
+                "cvs_mode": c.get("cvs_mode"),
+                "market_presence": c.get("market_presence"),
+                "provenance": c.get("provenance"),
+            }
+        )
+
+    # Sort by best-available movement signal: CVS delta when present, else
+    # the composite proxy (structural + notification), else notif_delta alone.
+    def _sort_key(r: dict[str, Any]) -> float:
+        for k in ("cvs_delta", "composite_proxy_delta"):
+            v = r.get(k)
+            if v is not None:
+                return abs(float(v))
+        return abs(float(r.get("notif_delta") or 0))
+
+    rows_sorted = sorted(rows, key=_sort_key, reverse=True)
+    top_movers = rows_sorted[: int(args.top_n)]
+
+    deltas = [r["cvs_delta"] for r in rows if r.get("cvs_delta") is not None]
+    median = sorted(deltas)[len(deltas) // 2] if deltas else None
+
+    return {
+        "period_a": args.period_a,
+        "period_b": args.period_b,
+        "totals": {
+            "corridors_compared": len(rows),
+            "corridors_in_a_only": in_a_only,
+            "corridors_in_b_only": in_b_only,
+            "available_periods": available_periods,
+            "risers": risers,
+            "fallers": fallers,
+            "stable": stable,
+            "median_cvs_delta": round(median, 4) if median is not None else None,
+        },
+        "top_movers": top_movers,
+    }
+
+
+class DetectClustersArgs(BaseModel):
+    period_a: int
+    period_b: int
+    criterion: Literal["cvs_delta", "notif_delta", "bdi_delta", "ocs_delta", "hhi_delta"] = Field(
+        default="cvs_delta",
+        description="Metric whose movement defines the cluster.",
+    )
+    group_by: Literal["commodity_chapter", "commodity_chapter_origin", "origin"] = Field(
+        default="commodity_chapter_origin",
+        description=(
+            "How to define a cluster. commodity_chapter_origin pairs the HS prefix "
+            "with the origin country; commodity_chapter groups across origins; "
+            "origin groups across all commodities from one country."
+        ),
+    )
+    min_lanes: int = Field(default=2, description="Minimum lanes in a cluster.")
+    top_k: int = Field(default=5, description="How many clusters to return.")
+
+
+@tool(description="Group corpus deltas into clusters where multiple lanes moved together; sort by aggregate movement magnitude. Pre-computes the cluster list the period-shift brief needs.")
+def detect_clusters(args: DetectClustersArgs, *, state: Any) -> dict[str, Any]:
+    """Run compare_corpus_periods, then bucket movers by group_by."""
+    base = compare_corpus_periods(
+        CompareCorpusPeriodsArgs(
+            period_a=args.period_a, period_b=args.period_b, top_n=500
+        ),
+        state=state,
+    )
+
+    def _key(r: dict[str, Any]) -> Optional[tuple]:
+        chap = r.get("commodity_chapter")
+        org = r.get("origin_m49")
+        org_name = r.get("origin_country")
+        if args.group_by == "commodity_chapter":
+            return (chap,) if chap else None
+        if args.group_by == "origin":
+            return (org, org_name) if org else None
+        # commodity_chapter_origin
+        return (chap, org, org_name) if chap and org else None
+
+    def _value(r: dict[str, Any]) -> Optional[float]:
+        # Map criterion to row field.
+        if args.criterion == "cvs_delta":
+            return r.get("cvs_delta")
+        if args.criterion == "notif_delta":
+            v = r.get("notif_delta")
+            return float(v) if v is not None else None
+        if args.criterion in ("bdi_delta", "ocs_delta", "hhi_delta"):
+            return (r.get("structural_deltas") or {}).get(
+                args.criterion.split("_delta")[0]
+            )
+        return None
+
+    groups: dict[tuple, list[dict[str, Any]]] = {}
+    for r in base.get("top_movers", []):
+        k = _key(r)
+        if k is None:
+            continue
+        v = _value(r)
+        if v is None:
+            continue
+        groups.setdefault(k, []).append({"row": r, "value": float(v)})
+
+    clusters: list[dict[str, Any]] = []
+    for k, members in groups.items():
+        if len(members) < args.min_lanes:
+            continue
+        values = [m["value"] for m in members]
+        same_direction = all(v > 0 for v in values) or all(v < 0 for v in values)
+        mean = sum(values) / len(values)
+        clusters.append(
+            {
+                "key": list(k),
+                "lane_count": len(members),
+                "criterion": args.criterion,
+                "mean_movement": round(mean, 4),
+                "max_movement": round(max(values, key=abs), 4),
+                "same_direction": same_direction,
+                "lanes": [
+                    {
+                        "lane_key": (
+                            f"{m['row'].get('commodity_hs')}/"
+                            f"{m['row'].get('destination_m49')}/"
+                            f"{m['row'].get('origin_m49')}"
+                        ),
+                        "movement": m["value"],
+                    }
+                    for m in members[:5]
+                ],
+            }
+        )
+
+    clusters_sorted = sorted(
+        clusters,
+        key=lambda c: abs(c["mean_movement"]) * c["lane_count"],
+        reverse=True,
+    )
+
+    return {
+        "period_a": args.period_a,
+        "period_b": args.period_b,
+        "criterion": args.criterion,
+        "group_by": args.group_by,
+        "clusters": clusters_sorted[: int(args.top_k)],
+    }
 
 
 __all__ = [
