@@ -58,6 +58,7 @@ import { RolePills } from "@/components/shared/RolePill";
 import { MarketPresenceBadge } from "@/components/shared/MarketPresenceBadge";
 import LaneWalkthrough from "@/components/shared/LaneWalkthrough";
 import CvsComposition from "@/components/shared/CvsComposition";
+import BriefCard from "@/components/shared/BriefCard";
 
 const HAZARD_CATS: {
   key: HazardBucket;
@@ -386,6 +387,13 @@ export default function LaneReport() {
           )}
         </div>
       </header>
+
+      {/* AI forensic brief — synthesised narrative grounded in the lane's metrics */}
+      <BriefCard
+        commodity_hs={hs}
+        destination_m49={dest}
+        origin_m49={origin}
+      />
 
       {/* Headline priority card */}
       <section

@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { ChevronDown, ChevronRight, Calculator } from "lucide-react";
 import FormulaBlock from "@/components/shared/FormulaBlock";
 import { fmt } from "@/lib/utils";
@@ -30,8 +29,6 @@ export default function CvsComposition({
   profile,
   weights,
 }: CvsCompositionProps) {
-  const [open, setOpen] = useState(false);
-
   const sciNorm = profile.sci_norm;
   const crsNorm = profile.crs_norm;
   const hisNorm = profile.his_norm;
@@ -84,31 +81,33 @@ export default function CvsComposition({
   const cvsComputed = maxAmp > 0 ? (base * amp) / maxAmp : 0;
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between px-5 py-3 text-left"
-        aria-expanded={open}
-      >
+    <details className="group rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <summary className="flex w-full cursor-pointer list-none items-center justify-between px-5 py-3 text-left [&::-webkit-details-marker]:hidden">
         <div className="flex items-center gap-2">
-          {open ? (
-            <ChevronDown size={16} className="text-slate-500" aria-hidden />
-          ) : (
-            <ChevronRight size={16} className="text-slate-500" aria-hidden />
-          )}
+          <ChevronRight
+            size={16}
+            className="text-slate-500 group-open:hidden"
+            aria-hidden
+          />
+          <ChevronDown
+            size={16}
+            className="hidden text-slate-500 group-open:block"
+            aria-hidden
+          />
           <Calculator size={15} className="text-purple-600" aria-hidden />
           <span className="text-sm font-semibold text-slate-900">
             How this CVS was built
           </span>
         </div>
-        <span className="text-[11px] text-slate-500">
-          {open ? "Hide composition math" : "Show composition math"}
+        <span className="text-[11px] text-slate-500 group-open:hidden">
+          Show composition math
         </span>
-      </button>
+        <span className="hidden text-[11px] text-slate-500 group-open:inline">
+          Hide composition math
+        </span>
+      </summary>
 
-      {open && (
-        <div className="space-y-3 border-t border-slate-100 px-5 py-4">
+      <div className="space-y-3 border-t border-slate-100 px-5 py-4">
           <p className="text-[11px] text-slate-600">
             CVS = (SCI<sub>norm</sub> × CRS<sub>norm</sub>) × (1 + Σ w·signal) / (1 + Σ w).
             Terms whose normalised value is missing for this lane drop out of
@@ -176,7 +175,6 @@ export default function CvsComposition({
               )}
           </div>
         </div>
-      )}
-    </section>
+    </details>
   );
 }

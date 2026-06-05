@@ -66,23 +66,37 @@ function LabInner() {
       </header>
 
       <nav
+        aria-label="Research panels"
         className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm"
-        role="tablist"
       >
         {TABS.map((t) => {
           const active = t.key === tab;
+          const tabClass = `rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+            active
+              ? "bg-blue-600 text-white shadow-sm"
+              : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+          }`;
+
+          if (active) {
+            return (
+              <button
+                key={t.key}
+                type="button"
+                aria-current="page"
+                onClick={() => setTab(t.key)}
+                className={tabClass}
+              >
+                {t.label}
+              </button>
+            );
+          }
+
           return (
             <button
               key={t.key}
               type="button"
-              role="tab"
-              aria-selected={active}
               onClick={() => setTab(t.key)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                active
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              }`}
+              className={tabClass}
             >
               {t.label}
             </button>
@@ -92,7 +106,7 @@ function LabInner() {
 
       <p className="-mt-3 text-[11px] text-slate-500">{current.description}</p>
 
-      <section role="tabpanel">
+      <section aria-label={current.label}>
         {tab === "distributions" && <Distributions />}
         {tab === "cohorts" && <Cohorts />}
         {tab === "time_series" && <TimeSeries />}

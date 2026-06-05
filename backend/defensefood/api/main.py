@@ -82,6 +82,7 @@ def _cors_allow_origins() -> list[str]:
             out.append(o)
     return out
 from defensefood.api.routers import (
+    agent,
     commodities,
     corridors,
     countries,
@@ -110,6 +111,16 @@ async def lifespan(app: FastAPI):
         annotate_corridors_data_quality(state.corridor_metrics)
         # CVS + data-quality labels landed; refresh coverage counts.
         refresh_coverage(state)
+
+    # Agent subsystem — create the SQLite schema for cached briefs + audit log.
+    # Idempotent; safe to call on every boot.
+    try:
+        from defensefood.agent import cache as _agent_cache
+        db_path = _agent_cache.init_db()
+        print(f"Agent SQLite ready at {db_path}")
+    except Exception as exc:  # noqa: BLE001 — startup must not crash on agent issues
+        print(f"Agent SQLite init failed (non-fatal): {exc}")
+
     yield
 
 
@@ -139,6 +150,7 @@ app.include_router(hazards.router, prefix="/api/v1")
 app.include_router(scores.router, prefix="/api/v1")
 app.include_router(network.router, prefix="/api/v1")
 app.include_router(research.router, prefix="/api/v1")
+app.include_router(agent.router, prefix="/api/v1")
 
 
 @app.get("/")
