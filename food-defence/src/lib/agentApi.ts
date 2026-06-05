@@ -467,6 +467,166 @@ export async function fetchPeriodShift(opts?: {
   return res.json();
 }
 
+// ── hypotheses + anomaly explainer (Phase 5) ──────────────────────────────
+
+export type AnomalyVerdict = "anomalous" | "borderline" | "not_anomalous";
+
+export interface FalsifyingTest {
+  description: string;
+  suggested_tools: string[];
+}
+
+export interface Hypothesis {
+  headline: string;
+  narrative: string;
+  confidence: Confidence;
+  supporting_signals: CitedSignal[];
+  contradicting_signals: CitedSignal[];
+  falsifying_test: FalsifyingTest;
+  next_data: string;
+}
+
+export interface HypothesisSet {
+  target_label: string;
+  pattern_summary: string;
+  hypotheses: Hypothesis[];
+  caveats: string[];
+  verifier_notes: string[];
+}
+
+export interface HypothesisResponse {
+  hset: HypothesisSet;
+  corridor_key: string;
+  provider: string;
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  latency_ms: number;
+  cache_hit: boolean;
+  tool_trace: ToolTrace[];
+}
+
+export interface AnomalyExplanation {
+  target_label: string;
+  verdict: AnomalyVerdict;
+  headline: string;
+  why_anomalous: string;
+  why_not: string;
+  supporting_signals: CitedSignal[];
+  peer_comparison: string;
+  confidence: Confidence;
+  caveats: string[];
+  verifier_notes: string[];
+}
+
+export interface AnomalyResponse {
+  explanation: AnomalyExplanation;
+  corridor_key: string;
+  provider: string;
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  latency_ms: number;
+  cache_hit: boolean;
+  tool_trace: ToolTrace[];
+}
+
+export type HypothesisProbe =
+  | { cached: true; response: HypothesisResponse }
+  | { cached: false; needs_generation: true };
+
+export type AnomalyProbe =
+  | { cached: true; response: AnomalyResponse }
+  | { cached: false; needs_generation: true };
+
+export async function probeHypotheses(
+  hs: string,
+  dest: number,
+  origin: number
+): Promise<HypothesisProbe> {
+  const url = `${API_BASE}/agent/hypotheses/${encodeURIComponent(
+    hs
+  )}/${dest}/${origin}?only_cached=true`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Hypotheses probe ${res.status}: ${res.statusText}`);
+  const body = (await res.json()) as Record<string, unknown>;
+  if (body.cache_hit === false && body.needs_generation === true) {
+    return { cached: false, needs_generation: true };
+  }
+  return { cached: true, response: body as unknown as HypothesisResponse };
+}
+
+export async function fetchHypotheses(
+  hs: string,
+  dest: number,
+  origin: number,
+  opts?: { refresh?: boolean }
+): Promise<HypothesisResponse> {
+  const params = new URLSearchParams();
+  if (opts?.refresh) params.set("refresh", "true");
+  const qs = params.toString();
+  const url = `${API_BASE}/agent/hypotheses/${encodeURIComponent(
+    hs
+  )}/${dest}/${origin}${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const b = (await res.json()) as { detail?: string };
+      if (b.detail) detail = b.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`Hypotheses ${res.status}: ${detail}`);
+  }
+  return res.json();
+}
+
+export async function probeAnomaly(
+  hs: string,
+  dest: number,
+  origin: number
+): Promise<AnomalyProbe> {
+  const url = `${API_BASE}/agent/explain-anomaly/${encodeURIComponent(
+    hs
+  )}/${dest}/${origin}?only_cached=true`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Anomaly probe ${res.status}: ${res.statusText}`);
+  const body = (await res.json()) as Record<string, unknown>;
+  if (body.cache_hit === false && body.needs_generation === true) {
+    return { cached: false, needs_generation: true };
+  }
+  return { cached: true, response: body as unknown as AnomalyResponse };
+}
+
+export async function fetchAnomalyExplanation(
+  hs: string,
+  dest: number,
+  origin: number,
+  opts?: { refresh?: boolean }
+): Promise<AnomalyResponse> {
+  const params = new URLSearchParams();
+  if (opts?.refresh) params.set("refresh", "true");
+  const qs = params.toString();
+  const url = `${API_BASE}/agent/explain-anomaly/${encodeURIComponent(
+    hs
+  )}/${dest}/${origin}${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const b = (await res.json()) as { detail?: string };
+      if (b.detail) detail = b.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`Anomaly ${res.status}: ${detail}`);
+  }
+  return res.json();
+}
+
 // ── conversational Q&A (Phase 4) ──────────────────────────────────────────
 
 export type QAIntent =

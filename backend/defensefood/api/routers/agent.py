@@ -33,6 +33,14 @@ from defensefood.agent.briefs.period_shift import (
     PeriodShiftResult,
     generate_period_shift_brief,
 )
+from defensefood.agent.briefs.hypotheses import (
+    HypothesisResult,
+    generate_hypotheses,
+)
+from defensefood.agent.briefs.anomaly_explainer import (
+    AnomalyResult,
+    generate_anomaly_explanation,
+)
 from defensefood.agent.qa import handle_query
 from defensefood.agent.qa.runner import QAResult
 from defensefood.api.dependencies import AppState, get_state
@@ -634,6 +642,198 @@ def period_shift(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── Phase 5: hypotheses + anomaly explainer ──────────────────────────────
+
+
+def _hypotheses_to_dict(r: HypothesisResult) -> dict:
+    return r.model_dump(mode="json")
+
+
+@router.get("/hypotheses/{commodity_hs}/{destination_m49}/{origin_m49}")
+def hypotheses(
+    commodity_hs: str,
+    destination_m49: int,
+    origin_m49: int,
+    refresh: bool = Query(False),
+    only_cached: bool = Query(
+        False,
+        description=(
+            "Return cached set if present without invoking the LLM. Missing "
+            "cache yields {cache_hit: false, needs_generation: true}."
+        ),
+    ),
+    verify: Literal["strict", "fast", "off"] = Query("fast"),
+    state: AppState = Depends(get_state),
+):
+    """Generate (or return cached) hypothesis set for a lane."""
+    target_key = f"{commodity_hs}/{destination_m49}/{origin_m49}"
+    snap = _state_snapshot_hash(state)
+
+    cached = (
+        None if refresh
+        else agent_cache.get_cached_brief("hypotheses", target_key, snap)
+    )
+
+    if only_cached:
+        if cached:
+            return {
+                **cached["brief"],
+                "cache_hit": True,
+                "model": cached["model"],
+                "provider": cached["provider"],
+                "cost_usd": cached["cost_usd"],
+                "latency_ms": cached["latency_ms"],
+            }
+        return {
+            "cache_hit": False,
+            "needs_generation": True,
+            "target_key": target_key,
+            "snapshot_hash": snap,
+        }
+
+    if cached:
+        return {
+            **cached["brief"],
+            "cache_hit": True,
+            "model": cached["model"],
+            "provider": cached["provider"],
+            "cost_usd": cached["cost_usd"],
+            "latency_ms": cached["latency_ms"],
+        }
+
+    try:
+        result = generate_hypotheses(
+            commodity_hs, destination_m49, origin_m49,
+            state=state, verify=verify,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    brief_id = agent_cache.store_brief(
+        use_case="hypotheses",
+        target_key=target_key,
+        snapshot_hash=snap,
+        brief=_hypotheses_to_dict(result),
+        model=result.model,
+        provider=result.provider,
+        cost_usd=result.cost_usd,
+        latency_ms=result.latency_ms,
+    )
+    agent_cache.append_audit(
+        use_case="hypotheses",
+        target_key=target_key,
+        role="assistant",
+        content={"hset": result.hset.model_dump(), "tool_trace": result.tool_trace},
+        tokens_in=result.tokens_in,
+        tokens_out=result.tokens_out,
+        brief_id=brief_id,
+    )
+    agent_cache.record_cost(
+        use_case="hypotheses",
+        provider=result.provider,
+        model=result.model,
+        tokens_in=result.tokens_in,
+        tokens_out=result.tokens_out,
+        usd=result.cost_usd,
+    )
+    return _hypotheses_to_dict(result)
+
+
+def _anomaly_to_dict(r: AnomalyResult) -> dict:
+    return r.model_dump(mode="json")
+
+
+@router.get("/explain-anomaly/{commodity_hs}/{destination_m49}/{origin_m49}")
+def explain_anomaly(
+    commodity_hs: str,
+    destination_m49: int,
+    origin_m49: int,
+    refresh: bool = Query(False),
+    only_cached: bool = Query(False),
+    verify: Literal["strict", "fast", "off"] = Query("fast"),
+    state: AppState = Depends(get_state),
+):
+    """Generate (or return cached) anomaly explanation for a lane."""
+    target_key = f"{commodity_hs}/{destination_m49}/{origin_m49}"
+    snap = _state_snapshot_hash(state)
+
+    cached = (
+        None if refresh
+        else agent_cache.get_cached_brief("explain_anomaly", target_key, snap)
+    )
+
+    if only_cached:
+        if cached:
+            return {
+                **cached["brief"],
+                "cache_hit": True,
+                "model": cached["model"],
+                "provider": cached["provider"],
+                "cost_usd": cached["cost_usd"],
+                "latency_ms": cached["latency_ms"],
+            }
+        return {
+            "cache_hit": False,
+            "needs_generation": True,
+            "target_key": target_key,
+            "snapshot_hash": snap,
+        }
+
+    if cached:
+        return {
+            **cached["brief"],
+            "cache_hit": True,
+            "model": cached["model"],
+            "provider": cached["provider"],
+            "cost_usd": cached["cost_usd"],
+            "latency_ms": cached["latency_ms"],
+        }
+
+    try:
+        result = generate_anomaly_explanation(
+            commodity_hs, destination_m49, origin_m49,
+            state=state, verify=verify,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    brief_id = agent_cache.store_brief(
+        use_case="explain_anomaly",
+        target_key=target_key,
+        snapshot_hash=snap,
+        brief=_anomaly_to_dict(result),
+        model=result.model,
+        provider=result.provider,
+        cost_usd=result.cost_usd,
+        latency_ms=result.latency_ms,
+    )
+    agent_cache.append_audit(
+        use_case="explain_anomaly",
+        target_key=target_key,
+        role="assistant",
+        content={
+            "explanation": result.explanation.model_dump(),
+            "tool_trace": result.tool_trace,
+        },
+        tokens_in=result.tokens_in,
+        tokens_out=result.tokens_out,
+        brief_id=brief_id,
+    )
+    agent_cache.record_cost(
+        use_case="explain_anomaly",
+        provider=result.provider,
+        model=result.model,
+        tokens_in=result.tokens_in,
+        tokens_out=result.tokens_out,
+        usd=result.cost_usd,
+    )
+    return _anomaly_to_dict(result)
 
 
 # ── conversational Q&A (Phase 4) ──────────────────────────────────────────

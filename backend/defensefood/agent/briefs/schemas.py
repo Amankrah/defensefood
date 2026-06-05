@@ -277,3 +277,171 @@ class PeriodShiftBrief(BaseModel):
     caveats: list[str] = Field(default_factory=list, max_length=6)
     confidence: Confidence = "med"
     verifier_notes: list[str] = Field(default_factory=list)
+
+
+# ── Phase 5: hypothesis generator + anomaly explainer ─────────────────────
+
+
+class FalsifyingTest(BaseModel):
+    """A structured description of how to test (falsify) a hypothesis.
+
+    Not executable directly; the UI shows it so the researcher can run it
+    themselves, and a future ``test_hypothesis`` runner can use it. Keep
+    the shape simple to make it model-friendly.
+    """
+
+    description: str = Field(
+        description=(
+            "One sentence describing what would falsify the hypothesis, e.g. "
+            "'Compare 2022 and 2023 origin shares and confirm the second-largest "
+            "supplier dropped to zero.'"
+        ),
+    )
+    suggested_tools: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Tool names the runner would invoke. Examples: 'compare_periods', "
+            "'get_trade_anomalies', 'country_inbound_exposure'."
+        ),
+        max_length=4,
+    )
+
+
+class Hypothesis(BaseModel):
+    """A single candidate explanation for an observed pattern on a target."""
+
+    headline: str = Field(
+        description=(
+            "One short sentence stating the hypothesis. Example: 'The second-"
+            "largest supplier exited the lane, concentrating imports on the "
+            "remaining majority origin.'"
+        ),
+        max_length=240,
+    )
+    narrative: str = Field(
+        description=(
+            "One to two paragraphs explaining the mechanism and the evidence "
+            "in the corpus that supports or contradicts it."
+        ),
+    )
+    confidence: Confidence = Field(
+        default="med",
+        description=(
+            "How well the existing corpus supports this hypothesis. 'high' = "
+            "evidence directly supports it; 'med' = circumstantial; 'low' = "
+            "speculative or contradicted."
+        ),
+    )
+    supporting_signals: list[CitedSignal] = Field(
+        default_factory=list,
+        description="Cited values from the corpus that support the hypothesis.",
+        max_length=6,
+    )
+    contradicting_signals: list[CitedSignal] = Field(
+        default_factory=list,
+        description="Cited values that argue against the hypothesis.",
+        max_length=4,
+    )
+    falsifying_test: FalsifyingTest = Field(
+        description="What would settle the question if we ran it.",
+    )
+    next_data: str = Field(
+        default="",
+        description=(
+            "What additional data outside the corpus would clinch the answer. "
+            "Example: 'Shipping-route lineage data from a logistics provider'."
+        ),
+    )
+
+
+class HypothesisSet(BaseModel):
+    """The agent's set of candidate explanations for a target lane.
+
+    Submitted via the ``submit_hypotheses`` forced tool.
+    """
+
+    target_label: str = Field(
+        description=(
+            "Human label for the target, e.g. 'Spain mussels into France'."
+        ),
+    )
+    pattern_summary: str = Field(
+        description=(
+            "One sentence summarising the observed pattern the hypotheses are "
+            "trying to explain. Plain analyst voice, no em-dashes."
+        ),
+        max_length=300,
+    )
+    hypotheses: list[Hypothesis] = Field(
+        description="Two to four candidate explanations, sorted by confidence.",
+        min_length=1,
+        max_length=4,
+    )
+    caveats: list[str] = Field(default_factory=list, max_length=6)
+    verifier_notes: list[str] = Field(default_factory=list)
+
+
+# ── Anomaly explainer ─────────────────────────────────────────────────────
+
+
+AnomalyVerdict = Literal["anomalous", "borderline", "not_anomalous"]
+
+
+class AnomalyExplanation(BaseModel):
+    """Deeper-than-a-brief diagnostic of why a lane reads as anomalous.
+
+    Compared to ``LaneBrief``, this one explicitly weighs the evidence on
+    both sides: "what makes this stand out" + "what would convince me it
+    is not anomalous". Designed so a researcher can use the structured
+    output as a labelling input for the future predictive subsystem.
+    """
+
+    target_label: str = Field(
+        description="Human label, e.g. 'Croatia corn into Slovenia'.",
+    )
+    verdict: AnomalyVerdict = Field(
+        description=(
+            "anomalous = the lane stands out across multiple axes; "
+            "borderline = stands out on one axis but counter-evidence exists; "
+            "not_anomalous = looks like a typical lane in its peer group."
+        ),
+    )
+    headline: str = Field(
+        description="One sentence stating the verdict and the strongest cue.",
+        max_length=300,
+    )
+    why_anomalous: str = Field(
+        description=(
+            "One paragraph naming the specific deviations from peer behaviour "
+            "(magnitude, sustained vs spike, structural vs hazard, cross-period "
+            "drift). Every numerical claim appears in supporting_signals."
+        ),
+    )
+    why_not: str = Field(
+        default="",
+        description=(
+            "One paragraph stating the strongest counter-evidence: data "
+            "quality limits, plausible non-anomalous interpretations, or "
+            "missing context. Empty when the verdict is 'anomalous' AND no "
+            "counter-evidence exists in the corpus."
+        ),
+    )
+    supporting_signals: list[CitedSignal] = Field(
+        default_factory=list,
+        description=(
+            "Every numerical value cited in why_anomalous or why_not. The "
+            "verifier re-fetches each."
+        ),
+        max_length=12,
+    )
+    peer_comparison: str = Field(
+        default="",
+        description=(
+            "One sentence comparing the lane to its catalogue-defined peers "
+            "(same commodity chapter, similar destination role). Empty when "
+            "peers are not informative."
+        ),
+    )
+    confidence: Confidence = "med"
+    caveats: list[str] = Field(default_factory=list, max_length=6)
+    verifier_notes: list[str] = Field(default_factory=list)

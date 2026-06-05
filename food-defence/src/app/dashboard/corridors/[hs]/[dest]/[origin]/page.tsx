@@ -59,6 +59,8 @@ import { MarketPresenceBadge } from "@/components/shared/MarketPresenceBadge";
 import LaneWalkthrough from "@/components/shared/LaneWalkthrough";
 import CvsComposition from "@/components/shared/CvsComposition";
 import BriefCard from "@/components/shared/BriefCard";
+import HypothesisCard from "@/components/shared/HypothesisCard";
+import AnomalyCard from "@/components/shared/AnomalyCard";
 import { LaneForensicSkeleton } from "@/components/shared/LoadingSkeleton";
 
 const HAZARD_CATS: {
@@ -387,6 +389,18 @@ export default function LaneReport() {
 
       {/* AI forensic brief — synthesised narrative grounded in the lane's metrics */}
       <BriefCard
+        commodity_hs={hs}
+        destination_m49={dest}
+        origin_m49={origin}
+      />
+
+      {/* Phase 5: candidate causal explanations and anomaly verdict */}
+      <HypothesisCard
+        commodity_hs={hs}
+        destination_m49={dest}
+        origin_m49={origin}
+      />
+      <AnomalyCard
         commodity_hs={hs}
         destination_m49={dest}
         origin_m49={origin}
