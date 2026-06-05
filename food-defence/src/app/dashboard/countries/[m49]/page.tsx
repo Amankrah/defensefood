@@ -26,6 +26,7 @@ import CountryBriefCard from "@/components/shared/CountryBriefCard";
 import DataTable, { type Column } from "@/components/shared/DataTable";
 import { MarketPresenceBadge } from "@/components/shared/MarketPresenceBadge";
 import { interpretAcep } from "@/lib/interpret";
+import { CountrySnapshotSkeleton } from "@/components/shared/LoadingSkeleton";
 
 const INBOUND_COLS: Column<CorridorMetric>[] = [
   {
@@ -103,11 +104,7 @@ export default function CountrySnapshot() {
   }, [m49]);
 
   if (loading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-9 w-9 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
-      </div>
-    );
+    return <CountrySnapshotSkeleton m49={m49} />;
   }
 
   if (!detail || "error" in detail) {

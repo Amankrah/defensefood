@@ -25,6 +25,7 @@ import {
   probeCountryBrief,
   streamCountryBrief,
 } from "@/lib/agentApi";
+import { BriefSkeleton, phaseFromStatus } from "./LoadingSkeleton";
 
 interface CountryBriefCardProps {
   m49: number;
@@ -49,7 +50,7 @@ interface LoadState {
  */
 export default function CountryBriefCard({
   m49,
-  defaultVerify = "strict",
+  defaultVerify = "fast",
 }: CountryBriefCardProps) {
   const [state, setState] = useState<LoadState>({
     phase: "probing",
@@ -207,10 +208,26 @@ export default function CountryBriefCard({
         )}
 
         {state.phase === "streaming" && !brief && (
-          <ProgressTrace
-            status={state.status}
-            toolCalls={state.toolCalls}
-            verifierNotes={state.verifierNotes}
+          <BriefSkeleton
+            phase={phaseFromStatus(
+              state.status,
+              state.toolCalls.map((t) => t.name)
+            )}
+            toolCalls={state.toolCalls.map((t) => ({
+              name: t.name,
+              latency_ms: t.latency_ms,
+            }))}
+            status={
+              state.toolCalls.length > 0
+                ? `Step ${state.toolCalls.length}: ${
+                    state.toolCalls[state.toolCalls.length - 1].name
+                  }${
+                    state.toolCalls[state.toolCalls.length - 1].phase
+                      ? ` [${state.toolCalls[state.toolCalls.length - 1].phase}]`
+                      : ""
+                  }`
+                : state.status ?? "Briefing two specialists in parallel"
+            }
           />
         )}
 
@@ -403,48 +420,6 @@ function LaneChip({ lane }: { lane: string }) {
     >
       {lane}
     </Link>
-  );
-}
-
-function ProgressTrace({
-  status,
-  toolCalls,
-  verifierNotes,
-}: {
-  status?: string;
-  toolCalls: (ToolTrace & { phase?: string })[];
-  verifierNotes: string[];
-}) {
-  return (
-    <div className="space-y-2 text-xs text-slate-600">
-      {status && (
-        <p className="font-medium text-slate-700">
-          <Activity size={12} className="mr-1 inline animate-pulse" aria-hidden />
-          {status}
-        </p>
-      )}
-      {toolCalls.length > 0 && (
-        <ul className="space-y-0.5 font-mono text-[11px] text-slate-500">
-          {toolCalls.map((t, i) => (
-            <li key={i}>
-              <span className="text-slate-400">→</span>{" "}
-              {t.phase && (
-                <span className="text-[10px] text-violet-600">[{t.phase}]</span>
-              )}{" "}
-              {t.name}
-              {t.result.ok === false && (
-                <span className="ml-1 text-red-500">(error)</span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {verifierNotes.length > 0 && (
-        <p className="text-amber-700">
-          Verifier flagged {verifierNotes.length} note{verifierNotes.length === 1 ? "" : "s"}.
-        </p>
-      )}
-    </div>
   );
 }
 

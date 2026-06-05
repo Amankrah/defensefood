@@ -340,6 +340,46 @@ def test_lane_brief_endpoint_caches_via_sqlite():
     app.dependency_overrides.clear()
 
 
+# ── pre-loaded data block ────────────────────────────────────────────────
+
+
+def test_preload_block_embedded_in_user_prompt():
+    """The mock provider receives the pre-loaded data in the user prompt and
+    therefore does not need to call get_corridor_profile etc."""
+    state = _golden_state()
+    mock = _MockProvider(brief=_make_brief())
+    with patch.object(lb_mod, "get_provider", return_value=mock):
+        lb_mod.generate_lane_brief(
+            "30771", 250, 724, state=state, verify="off"
+        )
+    # The very first provider call must carry the preload markers.
+    assert len(mock.calls) == 1
+    first_user = mock.calls[0]["user"]
+    assert "Pre-loaded lane data" in first_user
+    assert '"profile"' in first_user
+    assert '"metric_bands"' in first_user
+    # The metric bands cover at least cvs and his for the Spain mussels lane.
+    assert '"cvs"' in first_user
+    assert '"his"' in first_user
+
+
+def test_preload_tool_surface_excludes_redundant_lookups():
+    """The lane brief no longer offers get_corridor_profile /
+    get_corridor_notifications / interpret_metric_value to the agent."""
+    state = _golden_state()
+    mock = _MockProvider(brief=_make_brief())
+    with patch.object(lb_mod, "get_provider", return_value=mock):
+        lb_mod.generate_lane_brief(
+            "30771", 250, 724, state=state, verify="off"
+        )
+    offered = mock.calls[0]["tools"]
+    assert "get_corridor_profile" not in offered
+    assert "get_corridor_notifications" not in offered
+    assert "interpret_metric_value" not in offered
+    # Submit tool is still there.
+    assert "submit_lane_brief" in offered
+
+
 # ── style scanner ────────────────────────────────────────────────────────
 
 

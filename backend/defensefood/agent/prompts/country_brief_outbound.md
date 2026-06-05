@@ -27,14 +27,23 @@ Hard rules. The reflection pass scans for them.
 
 ## Workflow
 
-1. `country_outbound_orps` first. Returns per-HS ORPS plus PCC real-vs-proxy
-   counts.
-2. `list_top_corridors` with `origin_m49 = m49` for the top 2 to 3 commodities
-   by ORPS to see the dominant destinations.
-3. `get_methodology` only if you cite an ORPS threshold you do not know.
-4. `submit_outbound_half` once.
+The user prompt contains a `## Pre-loaded data` block with the full
+`country_outbound_orps` output: per-HS ORPS values, PCC real-vs-proxy counts,
+and the dominant destinations per commodity. Do not call
+`country_outbound_orps` or `interpret_metric_value` for fields already in
+that block.
 
-Hard cap: 4 tool calls before submit.
+1. Read the pre-loaded JSON.
+2. Draft the outbound half.
+3. Call `submit_outbound_half` once.
+
+Optional tools, only when needed:
+
+- `list_top_corridors` with `origin_m49 = m49`: only when you need lane-level
+  detail not in the preload's destination summary.
+- `get_methodology`: only when you cite a threshold you do not know.
+
+Hard cap: 2 optional tool calls before submit.
 
 ## Output rules
 
@@ -44,6 +53,9 @@ Hard cap: 4 tool calls before submit.
   these rows" and lower confidence one band.
 - Every numerical value appears in `signals` with matching `source_field`.
 - `notable_lanes`: up to 3 keys.
+- **Expand every abbreviation on first use.** Examples: "Outbound Risk
+  Propagation Score (ORPS)", "Per Capita Consumption (PCC)". Use the
+  abbreviation alone after first mention.
 
 ## Required caveats
 

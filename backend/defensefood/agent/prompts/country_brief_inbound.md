@@ -27,14 +27,25 @@ Hard rules. The reflection pass scans for them.
 
 ## Workflow
 
-1. `country_inbound_exposure` first. Gives ACEP, the role split, and the top
-   inbound lanes.
-2. `get_corridor_profile` for the top 2 to 3 lanes you plan to cite.
-3. `interpret_metric_value` for ACEP to confirm the band.
-4. `get_methodology` only if you need a threshold you do not know.
-5. `submit_inbound_half` once.
+The user prompt contains a `## Pre-loaded data` block with the full
+`country_inbound_exposure` output: ACEP, the role split, top inbound lanes
+with their headline metrics. Do not call `country_inbound_exposure`,
+`interpret_metric_value`, or `get_corridor_notifications` for any field
+already in that block.
 
-Hard cap: 4 tool calls before submit.
+1. Read the pre-loaded JSON.
+2. Draft the inbound half.
+3. Call `submit_inbound_half` once.
+
+Optional tools, only when needed:
+
+- `get_corridor_profile(hs, dest, origin)`: only when you cite a lane and
+  need a metric not in the preload's top-lane summary.
+- `list_top_corridors`: only when you want the global picture beyond this
+  destination.
+- `get_methodology`: only when you need a band threshold you do not know.
+
+Hard cap: 2 optional tool calls before submit.
 
 ## Output rules
 
@@ -46,6 +57,10 @@ Hard cap: 4 tool calls before submit.
   caveat.
 - Every numerical value appears in `signals` with matching `source_field`.
 - `notable_lanes`: up to 3 keys in `hs/dest/origin` format.
+- **Expand every abbreviation on first use.** Examples: "Aggregate Country
+  Exposure Pressure (ACEP)", "Hazard Intensity Score (HIS)", "Composite
+  Vulnerability Score (CVS)". Use the abbreviation alone after first
+  mention.
 
 ## Required caveats
 

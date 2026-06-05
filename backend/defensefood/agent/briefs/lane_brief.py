@@ -37,16 +37,26 @@ logger = logging.getLogger(__name__)
 VerifyMode = Literal["strict", "fast", "off"]
 
 # Tools the agent may use while drafting.
+#
+# The corridor profile, notifications, and per-metric band interpretations are
+# pre-loaded by ``_preload_lane_context`` into the user prompt before the LLM
+# is invoked. The tools below cover the remaining, optional lookups: methodology
+# thresholds, period comparisons, hazard probability, mirror-trade anomalies,
+# and broader country context. The agent typically calls 0 to 2 of these.
 _LANE_DRAFT_TOOLS: list[str] = [
-    "get_corridor_profile",
     "get_methodology",
-    "interpret_metric_value",
     "compare_periods",
-    "get_corridor_notifications",
     "get_hazard_probability",
     "get_trade_anomalies",
     "country_inbound_exposure",
 ]
+
+# Metric fields we pre-interpret server-side. The agent never has to call
+# interpret_metric_value for these — the band labels are already in the
+# preload block.
+_PRELOAD_INTERPRETATION_FIELDS: tuple[str, ...] = (
+    "cvs", "sci", "his", "hdi", "hhi", "ocs", "idr", "bdi", "dgi", "mtd",
+)
 
 
 # ── submit_lane_brief: forced final-step tool ─────────────────────────────
@@ -106,18 +116,143 @@ def _coerce_float(v: Any) -> Optional[float]:
 # ── user prompt construction ──────────────────────────────────────────────
 
 
-def _build_user_prompt(hs: str, dest: int, origin: int, corridor: dict[str, Any]) -> str:
+def _preload_lane_context(
+    state: Any,
+    hs: str,
+    dest: int,
+    origin: int,
+    corridor: dict[str, Any],
+) -> dict[str, Any]:
+    """Run the deterministic lookups the dashboard already showed the user.
+
+    The corridor record, notification mix, and per-metric band labels are
+    cheap to compute server-side. Pre-fetching them and embedding the result
+    in the user prompt eliminates 3 to 5 LLM round-trips per brief.
+
+    Returns a dict shaped like::
+
+        {
+            "profile": {...},          # corridor profile minus heavy fields
+            "notifications": {...},    # alert mix from get_corridor_notifications
+            "metric_bands": {          # per-field band + label
+                "cvs": {"value": 0.167, "band": "low", "label": "..."},
+                ...
+            },
+            "period_comparison": {...} # only if trade_periods length > 1
+        }
+    """
+    out: dict[str, Any] = {}
+
+    # 1. Corridor profile. Strip large embedded objects (hazard_breakdown is
+    #    already in `notifications`; raw arrays of trade rows are noise).
+    profile_call = invoke_tool(
+        "get_corridor_profile",
+        {"commodity_hs": str(hs), "destination_m49": int(dest), "origin_m49": int(origin)},
+        state=state,
+    )
+    if profile_call.get("ok"):
+        out["profile"] = profile_call.get("result")
+
+    # 2. Notifications (count + hazard mix + recency).
+    notif_call = invoke_tool(
+        "get_corridor_notifications",
+        {"commodity_hs": str(hs), "destination_m49": int(dest), "origin_m49": int(origin)},
+        state=state,
+    )
+    if notif_call.get("ok"):
+        out["notifications"] = notif_call.get("result")
+
+    # 3. Band labels for every metric field we care about that has a value.
+    bands: dict[str, Any] = {}
+    for field in _PRELOAD_INTERPRETATION_FIELDS:
+        val = corridor.get(field)
+        f = _coerce_float(val)
+        if f is None:
+            continue
+        b = invoke_tool(
+            "interpret_metric_value",
+            {"metric_key": field, "value": f},
+            state=state,
+        )
+        if b.get("ok"):
+            r = b.get("result") or {}
+            bands[field] = {
+                "value": f,
+                "band": r.get("band"),
+                "label": r.get("verdict") or r.get("label"),
+                "advice": r.get("advice"),
+            }
+    if bands:
+        out["metric_bands"] = bands
+
+    # 4. Period comparison only when multi-year data is available.
+    periods = corridor.get("trade_periods") or []
+    if isinstance(periods, list) and len(periods) >= 2:
+        try:
+            latest, prior = sorted(periods)[-1], sorted(periods)[-2]
+            cmp_call = invoke_tool(
+                "compare_periods",
+                {
+                    "corridor_key": f"{hs}/{dest}/{origin}",
+                    "period_a": int(prior),
+                    "period_b": int(latest),
+                },
+                state=state,
+            )
+            if cmp_call.get("ok"):
+                out["period_comparison"] = cmp_call.get("result")
+        except Exception:
+            pass
+
+    return out
+
+
+def _build_user_prompt(
+    hs: str,
+    dest: int,
+    origin: int,
+    corridor: dict[str, Any],
+    preload: dict[str, Any],
+) -> str:
+    """Build the user-side prompt with pre-loaded data embedded.
+
+    The agent is told this block exists and that it should NOT re-call the
+    tools that produced it. Optional tools (methodology, hazard probability,
+    mirror trade, country context) remain available for genuine investigation.
+    """
+    import json as _json
+
     origin_country = corridor.get("origin_country") or f"M49={origin}"
     dest_country = corridor.get("destination_country") or f"M49={dest}"
     name = corridor.get("commodity_name") or f"HS {hs}"
-    return (
+
+    head = (
         f"Write a lane forensic brief for the corridor:\n\n"
         f"  Commodity: {name} (HS {hs})\n"
         f"  Origin:    {origin_country} (M49 {origin})\n"
         f"  Destination: {dest_country} (M49 {dest})\n\n"
-        f"Follow the workflow in the system prompt. End by calling "
-        f"submit_lane_brief exactly once."
     )
+
+    preload_json = _json.dumps(preload, ensure_ascii=False, indent=2, default=str)
+    pre = (
+        "## Pre-loaded lane data (already computed; do NOT re-fetch)\n\n"
+        "The following lookups have been run server-side. Do not call\n"
+        "`get_corridor_profile`, `get_corridor_notifications`, or\n"
+        "`interpret_metric_value` for any field below. Read the JSON, draft\n"
+        "the brief, and submit. Call optional tools (methodology, period\n"
+        "compare, hazard probability, mirror trade) only if you actually need\n"
+        "a value not already present.\n\n"
+        "```json\n"
+        f"{preload_json}\n"
+        "```\n\n"
+    )
+
+    tail = (
+        "Follow the workflow in the system prompt. End by calling "
+        "`submit_lane_brief` exactly once."
+    )
+
+    return head + pre + tail
 
 
 # ── forced-submit fallback helpers ────────────────────────────────────────
@@ -382,7 +517,8 @@ def generate_lane_brief(
         )
 
     system_prompt = _load_system_prompt()
-    user_prompt = _build_user_prompt(hs, dest, origin, corridor)
+    preload = _preload_lane_context(state, hs, dest, origin, corridor)
+    user_prompt = _build_user_prompt(hs, dest, origin, corridor, preload)
     prov = get_provider(provider)
 
     # First pass: draft. The agent explores with read tools and is expected to
@@ -405,8 +541,12 @@ def generate_lane_brief(
     if run.structured_output is None:
         prior_text = (run.final_text or "").strip()
         prior_findings = _summarise_tool_traces(run.tool_traces)
-        force_user_prompt = _build_force_submit_prompt(
-            hs, dest, origin, corridor, prior_text, prior_findings
+        force_user_prompt = (
+            user_prompt
+            + "\n\n"
+            + _build_force_submit_prompt(
+                hs, dest, origin, corridor, prior_text, prior_findings
+            )
         )
         forced = prov.tool_use_loop(
             system_prompt=system_prompt,

@@ -40,19 +40,19 @@ logger = logging.getLogger(__name__)
 VerifyMode = Literal["strict", "fast", "off"]
 
 
+# The exposure / ORPS lookup is pre-loaded into the user prompt for each
+# specialist, so the agent does not waste an LLM round-trip retrieving the
+# data the dashboard already displayed. Remaining tools are optional and
+# cover broader investigation.
 _INBOUND_TOOLS = [
-    "country_inbound_exposure",
     "get_corridor_profile",
     "list_top_corridors",
     "get_methodology",
-    "interpret_metric_value",
 ]
 
 _OUTBOUND_TOOLS = [
-    "country_outbound_orps",
     "list_top_corridors",
     "get_methodology",
-    "interpret_metric_value",
 ]
 
 
@@ -121,11 +121,29 @@ def _country_label(state: Any, m49: int) -> str:
     return f"M49 {m49}"
 
 
-def _user_prompt(m49: int, label: str, side: str) -> str:
+def _preload_country_side(state: Any, m49: int, side: str) -> dict[str, Any]:
+    """Pre-fetch the inbound / outbound aggregate the dashboard already showed."""
+    if side == "inbound":
+        call = invoke_tool("country_inbound_exposure", {"m49": int(m49)}, state=state)
+    else:
+        call = invoke_tool("country_outbound_orps", {"m49": int(m49)}, state=state)
+    return call.get("result") or {}
+
+
+def _user_prompt(m49: int, label: str, side: str, preload: dict[str, Any]) -> str:
+    import json as _json
+    tool_name = "country_inbound_exposure" if side == "inbound" else "country_outbound_orps"
+    preload_json = _json.dumps(preload, ensure_ascii=False, indent=2, default=str)
     return (
-        f"Write the {side} half of the country brief for {label}. "
+        f"Write the {side} half of the country brief for {label}.\n\n"
+        f"## Pre-loaded data (already computed; do NOT re-fetch)\n\n"
+        f"The `{tool_name}` lookup has been run server-side. Read this JSON\n"
+        f"and draft the half directly. Optional tools (get_corridor_profile,\n"
+        f"list_top_corridors, get_methodology) remain available only when you\n"
+        f"need a value not already present.\n\n"
+        f"```json\n{preload_json}\n```\n\n"
         f"Follow the workflow in the system prompt. End by calling "
-        f"submit_{side}_half exactly once."
+        f"`submit_{side}_half` exactly once."
     )
 
 
@@ -150,13 +168,14 @@ def _run_specialist(
 ) -> tuple[CountryHalf, AgentRun]:
     prov = get_provider(provider_name)
     label = _country_label(state, m49)
+    preload = _preload_country_side(state, m49, side)
     if side == "inbound":
         system = _load_prompt("country_brief_inbound.md")
-        user = _user_prompt(m49, label, "inbound")
+        user = _user_prompt(m49, label, "inbound", preload)
         tool_names = _INBOUND_TOOLS + ["submit_inbound_half"]
     else:
         system = _load_prompt("country_brief_outbound.md")
-        user = _user_prompt(m49, label, "outbound")
+        user = _user_prompt(m49, label, "outbound", preload)
         tool_names = _OUTBOUND_TOOLS + ["submit_outbound_half"]
 
     run = prov.tool_use_loop(

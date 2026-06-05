@@ -59,6 +59,7 @@ import { MarketPresenceBadge } from "@/components/shared/MarketPresenceBadge";
 import LaneWalkthrough from "@/components/shared/LaneWalkthrough";
 import CvsComposition from "@/components/shared/CvsComposition";
 import BriefCard from "@/components/shared/BriefCard";
+import { LaneForensicSkeleton } from "@/components/shared/LoadingSkeleton";
 
 const HAZARD_CATS: {
   key: HazardBucket;
@@ -284,11 +285,7 @@ export default function LaneReport() {
   }, [dep, profile?.origin_country, profile?.destination_country]);
 
   if (loading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-9 w-9 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
-      </div>
-    );
+    return <LaneForensicSkeleton hs={hs} dest={dest} origin={origin} />;
   }
 
   if (!profile || "error" in profile) {
