@@ -16,7 +16,7 @@ Two stages produce structured outputs:
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -115,20 +115,23 @@ class QAStructuredData(BaseModel):
 
     Used when the answer is naturally tabular (filter / compare queries).
     The narrative still leads; the table is the supporting evidence.
+
+    All fields are intentionally permissive: the model occasionally produces
+    partial drafts (empty columns while still composing, mixed-type cell
+    values, slightly over-cap row counts) and we'd rather render whatever it
+    gives us than fail the entire turn.
     """
 
-    title: str
-    columns: list[QATableColumn] = Field(min_length=1, max_length=8)
-    rows: list[dict[str, str | int | float | None]] = Field(
-        default_factory=list, max_length=50
-    )
+    title: str = ""
+    columns: list[QATableColumn] = Field(default_factory=list, max_length=12)
+    rows: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     lane_keys: list[str] = Field(
         default_factory=list,
         description=(
             "Optional 'hs/dest/origin' anchors for the rows; the UI can wire "
             "them as clickable links to the lane forensic page."
         ),
-        max_length=50,
+        max_length=100,
     )
 
 
@@ -147,12 +150,12 @@ class QATurn(BaseModel):
             "Every numerical claim, paired with source_field. Empty when the "
             "answer is purely qualitative (explain / methodology intents)."
         ),
-        max_length=10,
+        max_length=20,
     )
     structured_data: Optional[QAStructuredData] = Field(
         default=None,
         description="Optional table block for filter / compare answers.",
     )
-    caveats: list[str] = Field(default_factory=list, max_length=4)
+    caveats: list[str] = Field(default_factory=list, max_length=10)
     confidence: Confidence = "med"
     verifier_notes: list[str] = Field(default_factory=list)

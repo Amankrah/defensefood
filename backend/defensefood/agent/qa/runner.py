@@ -212,6 +212,21 @@ def _classify_intent(
         )
 
 
+def _extract_last_submit_error(traces: Iterable[Any]) -> str:
+    """Walk the tool trace in reverse; return the latest submit_qa_answer
+    args-validation error, or empty string."""
+    seq = list(traces)
+    for t in reversed(seq):
+        if getattr(t, "name", "") != "submit_qa_answer":
+            continue
+        result = getattr(t, "result", None) or {}
+        if isinstance(result, dict) and not result.get("ok"):
+            err = result.get("error") or ""
+            # Pydantic errors can be very long; clip.
+            return str(err)[:400]
+    return ""
+
+
 # ── stage 2: composition ─────────────────────────────────────────────────
 
 
@@ -294,9 +309,18 @@ def _compose(
         run.cost_usd += forced.cost_usd
         run.tool_traces.extend(forced.tool_traces)
         if forced.structured_output is None:
+            # Surface the most recent validation error so the failure is
+            # actionable. The model likely produced args that didn't match the
+            # QATurn schema; the tool trace carries the Pydantic message.
+            last_err = _extract_last_submit_error(run.tool_traces)
+            if last_err:
+                raise RuntimeError(
+                    f"Composer could not produce a valid QATurn after the "
+                    f"forced retry. Last validation error: {last_err}"
+                )
             raise RuntimeError(
                 "Composer failed to call submit_qa_answer even under forced "
-                "tool choice. Provider may be unhealthy."
+                "tool choice and no error was captured in the trace."
             )
         run.structured_output = forced.structured_output
 

@@ -504,7 +504,7 @@ export interface QATableColumn {
 export interface QAStructuredData {
   title: string;
   columns: QATableColumn[];
-  rows: Record<string, string | number | null>[];
+  rows: Record<string, unknown>[];
   lane_keys: string[];
 }
 

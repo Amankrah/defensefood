@@ -311,6 +311,92 @@ def test_force_tool_fallback_when_composer_returns_text():
     assert prov.calls[2]["force"] == "submit_qa_answer"
 
 
+def test_provider_does_not_short_circuit_force_tool_on_validation_failure(monkeypatch):
+    """Regression: when submit_qa_answer returns ok=False (invalid args), the
+    provider must NOT capture None as structured_output. It must continue the
+    loop so the model sees the validation error and self-corrects.
+    """
+    # Stub a key so AnthropicProvider's constructor passes. The stub client
+    # below means no real network call ever happens.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    from defensefood.agent.config import reset_config_cache as _reset
+    _reset()
+    from defensefood.agent.provider import AnthropicProvider
+    from defensefood.agent.config import AgentConfig
+
+    # Build a stub Anthropic SDK client that scripts two messages:
+    # 1) tool_use(submit_qa_answer, {invalid args})
+    # 2) tool_use(submit_qa_answer, {valid args})
+    class _StubBlock:
+        def __init__(self, **kw) -> None:
+            self.__dict__.update(kw)
+
+    class _StubResp:
+        def __init__(self, content: list, *, input_tokens: int = 100, output_tokens: int = 50) -> None:
+            self.content = content
+            self.stop_reason = "tool_use"
+
+            class _Usage:
+                def __init__(self, i: int, o: int) -> None:
+                    self.input_tokens = i
+                    self.cache_read_input_tokens = 0
+                    self.cache_creation_input_tokens = 0
+                    self.output_tokens = o
+
+            self.usage = _Usage(input_tokens, output_tokens)
+
+    valid_turn = _basic_turn().model_dump()
+
+    invalid_response = _StubResp([
+        _StubBlock(
+            type="tool_use",
+            id="tu_1",
+            name="submit_qa_answer",
+            # `answer_markdown` is required as a string but we send int → invalid.
+            input={"answer_markdown": 42},
+        )
+    ])
+    valid_response = _StubResp([
+        _StubBlock(
+            type="tool_use",
+            id="tu_2",
+            name="submit_qa_answer",
+            input=valid_turn,
+        )
+    ])
+    scripted = [invalid_response, valid_response]
+
+    class _StubClient:
+        def __init__(self) -> None:
+            self.messages = self
+
+        def create(self, **_kw):  # noqa: D401
+            return scripted.pop(0)
+
+    cfg = AgentConfig(anthropic_api_key="sk-test")
+    p = AnthropicProvider(cfg)
+    p._client = _StubClient()
+
+    run = p.tool_use_loop(
+        system_prompt="x",
+        user_prompt="y",
+        tool_names=["submit_qa_answer"],
+        state=None,
+        max_iters=3,
+        force_tool="submit_qa_answer",
+    )
+    # The loop must have made TWO calls (the first was rejected, the second
+    # succeeded). structured_output is the valid turn.
+    assert run.structured_output is not None
+    assert run.structured_output["answer_markdown"].startswith("Spain mussels")
+    # Both invocations are in the trace.
+    names = [t.name for t in run.tool_traces]
+    assert names == ["submit_qa_answer", "submit_qa_answer"]
+    # First trace had ok=False; second ok=True.
+    assert run.tool_traces[0].result.get("ok") is False
+    assert run.tool_traces[1].result.get("ok") is True
+
+
 def test_style_sanitiser_strips_em_dashes_from_answer():
     state = _basic_state()
     dirty = QATurn(

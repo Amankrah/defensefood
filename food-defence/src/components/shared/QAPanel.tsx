@@ -405,8 +405,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
 
         {message.meta && (
           <p className="text-[10px] text-slate-400">
-            {message.meta.model} · {message.meta.latency_ms} ms · $
-            {message.meta.cost_usd.toFixed(4)}
+            {message.meta.latency_ms} ms · ${message.meta.cost_usd.toFixed(4)}
           </p>
         )}
 

@@ -160,7 +160,7 @@ export default function CountryBriefCard({
           )}
           {state.response && (
             <span title={`${state.response.tokens_in}→${state.response.tokens_out} tokens · $${state.response.cost_usd.toFixed(4)}`}>
-              {state.response.model} · {state.response.latency_ms} ms
+              {state.response.latency_ms} ms
             </span>
           )}
           <button

@@ -241,9 +241,11 @@ class AnthropicProvider:
                     }
                 )
 
-                # If we forced a particular tool, stop after the first call:
-                # the structured output is now captured in the trace.
-                if force_tool and tu.name == force_tool:
+                # If we forced a particular tool, stop after the first
+                # SUCCESSFUL call: the structured output is now captured.
+                # On validation failure (ok=False) keep looping so the model
+                # can see the error and self-correct on the next turn.
+                if force_tool and tu.name == force_tool and raw.get("ok"):
                     run.structured_output = raw.get("result")
                     run.final_text = ""
                     messages.append(
@@ -384,7 +386,11 @@ class OpenAIProvider:
                         "content": json.dumps(raw, ensure_ascii=False, default=str),
                     }
                 )
-                if force_tool and tc.function.name == force_tool:
+                if (
+                    force_tool
+                    and tc.function.name == force_tool
+                    and raw.get("ok")
+                ):
                     run.structured_output = raw.get("result")
                     run.final_text = ""
                     run.cost_usd = _usd_cost(model, run.tokens_in, run.tokens_out)
