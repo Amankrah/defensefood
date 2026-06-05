@@ -287,10 +287,12 @@ class FalsifyingTest(BaseModel):
 
     Not executable directly; the UI shows it so the researcher can run it
     themselves, and a future ``test_hypothesis`` runner can use it. Keep
-    the shape simple to make it model-friendly.
+    the shape simple to make it model-friendly: both fields default to
+    empty so the agent's partial drafts don't fail validation.
     """
 
     description: str = Field(
+        default="",
         description=(
             "One sentence describing what would falsify the hypothesis, e.g. "
             "'Compare 2022 and 2023 origin shares and confirm the second-largest "
@@ -303,7 +305,7 @@ class FalsifyingTest(BaseModel):
             "Tool names the runner would invoke. Examples: 'compare_periods', "
             "'get_trade_anomalies', 'country_inbound_exposure'."
         ),
-        max_length=4,
+        max_length=6,
     )
 
 
@@ -343,6 +345,7 @@ class Hypothesis(BaseModel):
         max_length=4,
     )
     falsifying_test: FalsifyingTest = Field(
+        default_factory=FalsifyingTest,
         description="What would settle the question if we ran it.",
     )
     next_data: str = Field(
@@ -373,9 +376,13 @@ class HypothesisSet(BaseModel):
         max_length=300,
     )
     hypotheses: list[Hypothesis] = Field(
-        description="Two to four candidate explanations, sorted by confidence.",
-        min_length=1,
-        max_length=4,
+        default_factory=list,
+        description=(
+            "Two to four candidate explanations, sorted by confidence. The "
+            "runner detects an empty list and reports a meaningful error to "
+            "the caller; do not produce an empty list intentionally."
+        ),
+        max_length=6,
     )
     caveats: list[str] = Field(default_factory=list, max_length=6)
     verifier_notes: list[str] = Field(default_factory=list)

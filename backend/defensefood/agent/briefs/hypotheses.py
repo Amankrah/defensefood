@@ -9,6 +9,13 @@ clinch the answer.
 
 Same shape as the lane brief generator: preload + tool-use loop + force
 submit + style sanitiser + reflection.
+
+**Model tier**: defaults to ``"heavy"`` (Claude Opus 4.7) because Opus
+follows the "2-4 hypotheses required, do not submit metadata-only" rule
+reliably; Sonnet tends to satisfice with empty-array submissions. The
+~5x cost premium is acceptable for this use case because hypotheses
+are opt-in and cached. Override via the ``tier`` kwarg if you want to
+A/B against Sonnet.
 """
 
 from __future__ import annotations
@@ -55,15 +62,35 @@ _PRELOAD_METRICS: tuple[str, ...] = (
 # ── submit_hypotheses: forced final-step tool ───────────────────────────
 
 
+# Minimum hypotheses required for a valid submission. The tool itself
+# enforces this so the model sees an immediate retry instruction when it
+# submits with an empty (or near-empty) array. The provider's tool-use loop
+# treats ok=False as a recoverable error and lets the model self-correct.
+_MIN_HYPOTHESES = 2
+
+
 @tool(
     name="submit_hypotheses",
     description=(
-        "Submit the final hypothesis set. Call exactly once. Every numerical "
-        "value cited in the narrative must appear in supporting_signals or "
-        "contradicting_signals with a matching source_field."
+        "Submit the final hypothesis set. The hypotheses array MUST contain "
+        f"at least {_MIN_HYPOTHESES} entries (ideally 2 to 4). Submissions "
+        "with fewer than this are rejected by the tool itself and you will "
+        "be asked to retry. Every numerical value cited in a hypothesis "
+        "narrative must appear in supporting_signals or contradicting_signals "
+        "with a matching source_field."
     ),
 )
 def _submit_hypotheses(args: HypothesisSet, *, state: Any) -> dict[str, Any]:
+    if len(args.hypotheses) < _MIN_HYPOTHESES:
+        raise ValueError(
+            f"Submission rejected: hypotheses array contains "
+            f"{len(args.hypotheses)} entries but at least {_MIN_HYPOTHESES} "
+            f"are required. Provide 2 to 4 distinct candidate explanations. "
+            f"If only one strong hypothesis exists, add a second 'null "
+            f"hypothesis: the observed pattern is consistent with peer "
+            f"behaviour and not meaningfully anomalous' as a contrast so the "
+            f"researcher can weigh both readings."
+        )
     return args.model_dump()
 
 
@@ -89,6 +116,20 @@ def _coerce_float(v: Any) -> Optional[float]:
     if math.isnan(f) or math.isinf(f):
         return None
     return f
+
+
+def _extract_last_submit_error(traces: Any, tool_name: str) -> str:
+    """Walk the trace in reverse; return the most recent failed-args error
+    for the named tool. Empty string when nothing was rejected."""
+    seq = list(traces)
+    for t in reversed(seq):
+        if getattr(t, "name", "") != tool_name:
+            continue
+        result = getattr(t, "result", None) or {}
+        if isinstance(result, dict) and not result.get("ok"):
+            err = result.get("error") or ""
+            return str(err)[:400]
+    return ""
 
 
 def _find_corridor(state: Any, hs: str, dest: int, origin: int) -> Optional[dict[str, Any]]:
@@ -324,7 +365,7 @@ def generate_hypotheses(
     state: Any,
     verify: VerifyMode = "fast",
     provider: Optional[ProviderName] = None,
-    tier: Tier = "narrative",
+    tier: Tier = "heavy",
     max_iters: int = 4,
 ) -> HypothesisResult:
     """Generate 2 to 4 candidate explanations for a corridor's pattern."""
@@ -347,7 +388,7 @@ def generate_hypotheses(
         state=state,
         tier=tier,
         max_iters=max_iters,
-        max_tokens=1800,
+        max_tokens=2200,
         temperature=0.4,
     )
 
@@ -364,8 +405,8 @@ def generate_hypotheses(
             tool_names=["submit_hypotheses"],
             state=state,
             tier=tier,
-            max_iters=2,
-            max_tokens=1800,
+            max_iters=3,
+            max_tokens=2200,
             temperature=0.2,
             force_tool="submit_hypotheses",
         )
@@ -374,9 +415,16 @@ def generate_hypotheses(
         run.cost_usd += forced.cost_usd
         run.tool_traces.extend(forced.tool_traces)
         if forced.structured_output is None:
+            last_err = _extract_last_submit_error(run.tool_traces, "submit_hypotheses")
+            if last_err:
+                raise RuntimeError(
+                    f"Hypothesis generator could not produce a valid "
+                    f"HypothesisSet after the forced retry. Last validation "
+                    f"error: {last_err}"
+                )
             raise RuntimeError(
                 "Hypothesis generator failed to call submit_hypotheses even "
-                "under forced tool choice. Provider may be unhealthy."
+                "under forced tool choice."
             )
         run.structured_output = forced.structured_output
 
@@ -386,6 +434,15 @@ def generate_hypotheses(
         raise RuntimeError(
             f"submit_hypotheses produced an invalid HypothesisSet: {exc}"
         ) from exc
+
+    if not hset.hypotheses:
+        # Model submitted only the metadata and forgot the array. Surface a
+        # specific error rather than rendering an empty card.
+        raise RuntimeError(
+            "Hypothesis generator submitted a HypothesisSet with no "
+            "hypotheses. The model likely ran out of output tokens before "
+            "writing the hypothesis array; try again with a fresh request."
+        )
 
     # Reflection.
     if verify != "off":

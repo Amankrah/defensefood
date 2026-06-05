@@ -178,6 +178,126 @@ def test_corridor_not_found_raises():
             h_mod.generate_hypotheses("999", 1, 2, state=state, verify="off")
 
 
+def test_hypothesis_validates_without_explicit_falsifying_test():
+    """Regression: previously the model could produce a Hypothesis without a
+    falsifying_test field and validation would reject the whole submission.
+    Now FalsifyingTest has all-default fields and Hypothesis.falsifying_test
+    has a default factory, so partial drafts pass.
+    """
+    from defensefood.agent.briefs.schemas import (
+        Hypothesis,
+        HypothesisSet,
+    )
+
+    # No falsifying_test on the dict at all → must validate.
+    raw = {
+        "headline": "Origin concentration rose because of a supplier exit.",
+        "narrative": "OCS climbed from 0.4 to 0.5 between 2022 and 2023.",
+        "confidence": "med",
+        # no supporting / contradicting signals, no falsifying_test, no next_data
+    }
+    h = Hypothesis.model_validate(raw)
+    assert h.falsifying_test.description == ""
+    assert h.next_data == ""
+
+    # Empty FalsifyingTest with no fields also validates.
+    hset = HypothesisSet(
+        target_label="x",
+        pattern_summary="x",
+        hypotheses=[h],
+    )
+    assert len(hset.hypotheses) == 1
+
+
+def test_tool_layer_rejects_empty_hypothesis_array():
+    """The submit_hypotheses tool itself raises when given an empty array, so
+    the model sees a recoverable error mid-loop and self-corrects on the
+    next iteration. We invoke the tool directly to pin the contract.
+    """
+    from defensefood.agent.tools import invoke_tool
+
+    state = _state()
+    # An empty hypotheses array is rejected at the tool layer.
+    result = invoke_tool(
+        "submit_hypotheses",
+        {
+            "target_label": "Spain mussels into France",
+            "pattern_summary": "Watchlist-band CVS with sustained alerts.",
+            "hypotheses": [],
+        },
+        state=state,
+    )
+    assert result["ok"] is False
+    assert "at least 2" in result["error"]
+
+
+def test_tool_layer_accepts_two_or_more_hypotheses():
+    """A valid 2-hypothesis submission passes the tool layer."""
+    from defensefood.agent.tools import invoke_tool
+
+    state = _state()
+    h1 = _hypothesis().model_dump()
+    h2 = _hypothesis().model_dump()
+    result = invoke_tool(
+        "submit_hypotheses",
+        {
+            "target_label": "Spain mussels into France",
+            "pattern_summary": "Watchlist-band CVS with sustained alerts.",
+            "hypotheses": [h1, h2],
+        },
+        state=state,
+    )
+    assert result["ok"] is True
+    assert len(result["result"]["hypotheses"]) == 2
+
+
+def test_runner_surfaces_validation_error_in_failure_message():
+    """When both passes fail validation, the runner reports the last error
+    instead of the generic 'Provider may be unhealthy' message."""
+    from defensefood.agent.briefs import hypotheses as h_mod
+    from defensefood.agent.provider import AgentRun, ToolTrace
+    from defensefood.agent.briefs.schemas import HypothesisSet
+
+    state = _state()
+
+    class _AlwaysFailsValidation:
+        name = "anthropic"
+
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def tool_use_loop(self, *, force_tool=None, **kw) -> AgentRun:
+            self.calls.append({"force": force_tool})
+            # Simulate the provider executing the tool and getting back an
+            # ok=False validation error.
+            failed_trace = ToolTrace(
+                name="submit_hypotheses",
+                args={},
+                result={
+                    "ok": False,
+                    "error": "Argument validation failed: target_label required",
+                },
+                latency_ms=2,
+            )
+            return AgentRun(
+                final_text="" if force_tool else "(some thinking)",
+                tool_traces=[failed_trace],
+                messages=[],
+                tokens_in=500,
+                tokens_out=200,
+                cost_usd=0.005,
+                model="claude-sonnet-4-6",
+                provider="anthropic",
+                stop_reason="tool_use" if not force_tool else "end_turn",
+                structured_output=None,
+            )
+
+    prov = _AlwaysFailsValidation()
+    with patch.object(h_mod, "get_provider", return_value=prov):
+        with pytest.raises(RuntimeError, match="Last validation error"):
+            h_mod.generate_hypotheses("30771", 250, 724, state=state, verify="off")
+
+
 def test_only_cached_endpoint_returns_needs_generation():
     """The only_cached probe must not invoke the provider when nothing is cached."""
     from fastapi.testclient import TestClient

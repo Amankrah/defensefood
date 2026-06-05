@@ -165,16 +165,35 @@ class AnthropicProvider:
         if force_tool:
             tool_choice = {"type": "tool", "name": force_tool}
 
+        # Some newer Claude models (e.g. Opus 4.7) deprecate ``temperature``
+        # and return a 400 when it is sent. Track whether we should drop it
+        # for the remainder of this call.
+        send_temperature = True
+
         for _ in range(max_iters):
-            resp = self._client.messages.create(
+            kwargs: dict[str, Any] = dict(
                 model=model,
                 max_tokens=max_tokens,
-                temperature=temperature,
                 system=system_blocks,
                 tools=tools_payload,
                 tool_choice=tool_choice,
                 messages=messages,
             )
+            if send_temperature:
+                kwargs["temperature"] = temperature
+            try:
+                resp = self._client.messages.create(**kwargs)
+            except Exception as exc:
+                msg = str(exc).lower()
+                if send_temperature and "temperature" in msg and "deprecated" in msg:
+                    # Retry once without temperature, then disable for the
+                    # remainder of this call so the next iteration doesn't
+                    # waste another round-trip.
+                    send_temperature = False
+                    kwargs.pop("temperature", None)
+                    resp = self._client.messages.create(**kwargs)
+                else:
+                    raise
 
             run.stop_reason = getattr(resp, "stop_reason", "") or ""
             usage = getattr(resp, "usage", None)

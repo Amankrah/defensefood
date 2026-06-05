@@ -397,6 +397,88 @@ def test_provider_does_not_short_circuit_force_tool_on_validation_failure(monkey
     assert run.tool_traces[1].result.get("ok") is True
 
 
+def test_anthropic_provider_drops_temperature_on_deprecation_error(monkeypatch):
+    """Regression: Opus 4.7 (and presumably future models) deprecate the
+    ``temperature`` parameter and return a 400 'temperature is deprecated'
+    error. The provider must catch that, retry without temperature, and
+    keep that flag off for the rest of the call so subsequent iterations
+    do not waste a round-trip on the same rejection.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    from defensefood.agent.config import reset_config_cache as _reset
+    _reset()
+    from defensefood.agent.provider import AnthropicProvider
+    from defensefood.agent.config import AgentConfig
+
+    class _StubBlock:
+        def __init__(self, **kw) -> None:
+            self.__dict__.update(kw)
+
+    class _StubResp:
+        def __init__(self, content: list) -> None:
+            self.content = content
+            self.stop_reason = "tool_use"
+
+            class _Usage:
+                input_tokens = 100
+                cache_read_input_tokens = 0
+                cache_creation_input_tokens = 0
+                output_tokens = 50
+
+            self.usage = _Usage()
+
+    class _DeprecationError(Exception):
+        pass
+
+    # Script the SDK: first call raises the deprecation error (caller still
+    # sent temperature). Second call (no temperature) returns a forced
+    # submit_qa_answer with valid args.
+    valid_resp = _StubResp([
+        _StubBlock(
+            type="tool_use",
+            id="tu_1",
+            name="submit_qa_answer",
+            input=_basic_turn().model_dump(),
+        )
+    ])
+
+    call_log: list[dict] = []
+
+    class _StubClient:
+        def __init__(self) -> None:
+            self.messages = self
+
+        def create(self, **kwargs):  # noqa: D401
+            call_log.append(dict(kwargs))
+            if "temperature" in kwargs:
+                # Mirror the real Anthropic SDK error shape closely enough
+                # for the provider's string-match detection.
+                raise _DeprecationError(
+                    "Error code: 400 - `temperature` is deprecated for this model."
+                )
+            return valid_resp
+
+    cfg = AgentConfig(anthropic_api_key="sk-test")
+    p = AnthropicProvider(cfg)
+    p._client = _StubClient()
+
+    run = p.tool_use_loop(
+        system_prompt="x",
+        user_prompt="y",
+        tool_names=["submit_qa_answer"],
+        state=None,
+        max_iters=2,
+        force_tool="submit_qa_answer",
+        temperature=0.3,
+    )
+    # Two SDK calls happened: one with temperature (rejected), one without
+    # (succeeded). structured_output is captured.
+    assert len(call_log) == 2
+    assert "temperature" in call_log[0]
+    assert "temperature" not in call_log[1]
+    assert run.structured_output is not None
+
+
 def test_style_sanitiser_strips_em_dashes_from_answer():
     state = _basic_state()
     dirty = QATurn(

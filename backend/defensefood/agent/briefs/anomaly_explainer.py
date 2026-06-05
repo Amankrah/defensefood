@@ -47,8 +47,13 @@ _PRELOAD_METRICS: tuple[str, ...] = (
     "cvs", "sci", "his", "hdi", "hhi", "ocs", "idr", "bdi", "dgi", "mtd",
 )
 
-# Hard cap on peers we summarise so the prompt stays bounded.
-_MAX_PEERS = 8
+# Hard cap on peers we summarise so the prompt stays bounded. Tuned to
+# fit within ~30-45 second wall-clock targets on Sonnet.
+_MAX_PEERS = 5
+# Per-period snapshots are bounded too: latest N years only.
+_MAX_PERIODS = 4
+# Notification cadence years cap.
+_MAX_CADENCE_YEARS = 6
 
 
 # ── submit_anomaly_explanation: forced final-step tool ─────────────────────
@@ -90,6 +95,20 @@ def _coerce_float(v: Any) -> Optional[float]:
     if math.isnan(f) or math.isinf(f):
         return None
     return f
+
+
+def _extract_last_submit_error(traces: Any, tool_name: str) -> str:
+    """Walk the trace in reverse; return the most recent failed-args error
+    for the named tool. Empty string when nothing was rejected."""
+    seq = list(traces)
+    for t in reversed(seq):
+        if getattr(t, "name", "") != tool_name:
+            continue
+        result = getattr(t, "result", None) or {}
+        if isinstance(result, dict) and not result.get("ok"):
+            err = result.get("error") or ""
+            return str(err)[:400]
+    return ""
 
 
 def _find_corridor(state: Any, hs: str, dest: int, origin: int) -> Optional[dict[str, Any]]:
@@ -222,7 +241,8 @@ def _preload_anomaly_context(
     if when_matters:
         out["when_matters"] = when_matters
 
-    # Per-period dependency snapshots.
+    # Per-period dependency snapshots, capped to the most recent N years
+    # so the prompt stays bounded.
     history = getattr(state, "dependency_history", None) or {}
     per_period: dict[str, Any] = {}
     try:
@@ -230,12 +250,13 @@ def _preload_anomaly_context(
     except (TypeError, ValueError):
         key = None
     if key is not None:
-        for period, snap in history.items():
-            if not isinstance(snap, dict):
-                continue
-            entry = snap.get(key)
-            if entry is not None:
-                per_period[str(period)] = entry
+        lane_periods = sorted(
+            (int(p), snap.get(key))
+            for p, snap in history.items()
+            if isinstance(snap, dict) and snap.get(key) is not None
+        )
+        for period, entry in lane_periods[-_MAX_PERIODS:]:
+            per_period[str(period)] = entry
     if per_period:
         out["per_period_snapshots"] = per_period
 
@@ -251,7 +272,9 @@ def _preload_anomaly_context(
             year = p_raw // 100 if p_raw >= 100000 else p_raw
             year_counts[year] = year_counts.get(year, 0) + 1
         if year_counts:
-            out["notification_cadence_by_year"] = dict(sorted(year_counts.items()))
+            # Latest N years only.
+            ordered = sorted(year_counts.items())[-_MAX_CADENCE_YEARS:]
+            out["notification_cadence_by_year"] = dict(ordered)
 
     # Peer summary.
     peers = _peer_summary(state, corridor)
@@ -408,7 +431,7 @@ def generate_anomaly_explanation(
     verify: VerifyMode = "fast",
     provider: Optional[ProviderName] = None,
     tier: Tier = "narrative",
-    max_iters: int = 4,
+    max_iters: int = 3,
 ) -> AnomalyResult:
     """Run the anomaly-explainer pipeline for one lane."""
     t0 = time.perf_counter()
@@ -430,7 +453,7 @@ def generate_anomaly_explanation(
         state=state,
         tier=tier,
         max_iters=max_iters,
-        max_tokens=1800,
+        max_tokens=1500,
         temperature=0.35,
     )
 
@@ -448,7 +471,7 @@ def generate_anomaly_explanation(
             state=state,
             tier=tier,
             max_iters=2,
-            max_tokens=1800,
+            max_tokens=1500,
             temperature=0.2,
             force_tool="submit_anomaly_explanation",
         )
@@ -457,6 +480,15 @@ def generate_anomaly_explanation(
         run.cost_usd += forced.cost_usd
         run.tool_traces.extend(forced.tool_traces)
         if forced.structured_output is None:
+            last_err = _extract_last_submit_error(
+                run.tool_traces, "submit_anomaly_explanation"
+            )
+            if last_err:
+                raise RuntimeError(
+                    f"Anomaly explainer could not produce a valid "
+                    f"AnomalyExplanation after the forced retry. Last "
+                    f"validation error: {last_err}"
+                )
             raise RuntimeError(
                 "Anomaly explainer failed to call submit_anomaly_explanation "
                 "even under forced tool choice."

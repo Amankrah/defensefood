@@ -36,8 +36,12 @@ lookups are already done.
 2. Pick the strongest pattern from the data (CVS in top band, sudden
    Origin Concentration Share (OCS) shift, sustained Hazard Intensity
    Score (HIS), Import Dependency Ratio (IDR) crossing 1, etc).
-3. Propose 2 to 4 candidate explanations. Each one names a different
-   causal mechanism. Do not just rephrase the same hypothesis.
+3. **Compose at least 2 and at most 4 candidate explanations.** Each one
+   names a different causal mechanism. Do not just rephrase the same
+   hypothesis. The `submit_hypotheses` tool itself rejects submissions
+   with fewer than 2 entries, so a metadata-only submit will fail and you
+   will be asked to retry. Write the full hypothesis array as part of
+   the SAME tool call as `target_label` and `pattern_summary`.
 4. For each hypothesis, set `confidence` honestly: 'high' means the
    corpus directly supports it; 'med' means the data is consistent but
    not conclusive; 'low' means speculative or contradicted on one axis.
@@ -52,7 +56,11 @@ Hard cap: 2 optional tool calls before submit.
 
 - `target_label`: human-friendly, e.g. "Spain mussels into France".
 - `pattern_summary`: one sentence naming the observed pattern.
-- `hypotheses`: 2 to 4 entries.
+- `hypotheses`: 2 to 4 entries. **This array must NEVER be empty.** The
+  runner explicitly rejects empty submissions. If you can only think of
+  one hypothesis, include it AND a second, weaker alternative ("null
+  hypothesis: the pattern is consistent with peer behaviour and not
+  meaningfully anomalous") so the array always has at least 2 items.
   - `headline`: single sentence, plain analyst voice.
   - `narrative`: 1 to 2 short paragraphs. Name the mechanism, then
     cite the evidence (with values matched in supporting_signals).

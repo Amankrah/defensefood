@@ -157,7 +157,15 @@ def invoke_tool(
         return {"ok": False, "error": f"Argument validation failed: {exc}"}
     try:
         result = spec.func(args, state=state)
+    except ValueError as exc:
+        # ValueError from a tool is the expected control-flow signal that
+        # the args were business-logic-invalid (e.g. submit_hypotheses
+        # rejecting an empty array). The model self-corrects on the next
+        # iteration; no stack trace needed.
+        logger.info("Tool %s rejected args: %s", name, exc)
+        return {"ok": False, "error": f"ValueError: {exc}"}
     except Exception as exc:  # noqa: BLE001 — broad on purpose; surface to LLM
+        # Anything else is a real bug — full traceback to the log.
         logger.exception("Tool %s raised", name)
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     return {"ok": True, "result": result}
