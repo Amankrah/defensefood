@@ -40,6 +40,7 @@ set -euo pipefail
 
 ALLOWED_SSH_IP="${ALLOWED_SSH_IP:-YOUR_IP_HERE}"
 
+DEPLOY_USER="${DEPLOY_USER:-ubuntu}"
 PROJECT_DIR="${PROJECT_DIR:-/var/www/defensefood}"
 BACKEND_DIR="$PROJECT_DIR/backend"
 FRONTEND_DIR="$PROJECT_DIR/food-defence"
@@ -758,7 +759,8 @@ cd $PROJECT_DIR
 git pull origin $GIT_BRANCH
 
 cd $RUST_CRATE_DIR
-source \$HOME/.cargo/env
+# Use deploy user's Cargo (sudo sets HOME=/root and breaks \$HOME/.cargo/env).
+source /home/$DEPLOY_USER/.cargo/env
 VIRTUAL_ENV=$VENV_DIR PATH=$VENV_DIR/bin:\$PATH \
     python -m maturin develop --release
 
@@ -848,7 +850,7 @@ Paths:
 
 Utility commands:
    • Status:    defensefood-status.sh
-   • Update:    sudo /usr/local/bin/defensefood-update.sh
+   • Update:    /usr/local/bin/defensefood-update.sh   # run as $DEPLOY_USER, not sudo
    • Backup:    sudo /usr/local/bin/defensefood-backup.sh
    • Security:  sudo /usr/local/bin/security-check.sh
    • Restart:   sudo supervisorctl restart all

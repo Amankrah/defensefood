@@ -22,6 +22,7 @@ import type {
 } from "@/lib/types";
 import { fmt, riskColor, truncate } from "@/lib/utils";
 import MetricCard from "@/components/shared/MetricCard";
+import CountryBriefCard from "@/components/shared/CountryBriefCard";
 import DataTable, { type Column } from "@/components/shared/DataTable";
 import { MarketPresenceBadge } from "@/components/shared/MarketPresenceBadge";
 import { interpretAcep } from "@/lib/interpret";
@@ -202,6 +203,9 @@ export default function CountrySnapshot() {
           subtext="Hazard intensity totalled across every inbound lane in the window."
         />
       </section>
+
+      {/* AI country brief — inbound + outbound forensic narrative */}
+      <CountryBriefCard m49={detail.m49} />
 
       {acep?.acep_by_role && (
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

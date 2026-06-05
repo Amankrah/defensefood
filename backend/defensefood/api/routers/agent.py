@@ -19,6 +19,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from defensefood.agent import cache as agent_cache
+from defensefood.agent.briefs.country_brief import (
+    CountryBriefResult,
+    generate_country_brief,
+)
 from defensefood.agent.briefs.lane_brief import (
     LaneBriefResult,
     VerifyMode,
@@ -82,6 +86,15 @@ def lane_brief(
         False,
         description="When true, bypass the cache and regenerate the brief.",
     ),
+    only_cached: bool = Query(
+        False,
+        description=(
+            "When true, return the cached brief if present without invoking the "
+            "LLM. If no cache hit, return {cache_hit: false, needs_generation: true} "
+            "with HTTP 200. Use for opt-in UX where new generation should be "
+            "gated behind an explicit user action."
+        ),
+    ),
     state: AppState = Depends(get_state),
 ):
     """Generate (or return cached) lane forensic brief.
@@ -95,6 +108,25 @@ def lane_brief(
         None if refresh
         else agent_cache.get_cached_brief("lane_brief", target_key, snap)
     )
+
+    # Opt-in path: caller wants a cache-only probe with zero LLM cost.
+    if only_cached:
+        if cached:
+            return {
+                **cached["brief"],
+                "cache_hit": True,
+                "model": cached["model"],
+                "provider": cached["provider"],
+                "cost_usd": cached["cost_usd"],
+                "latency_ms": cached["latency_ms"],
+            }
+        return {
+            "cache_hit": False,
+            "needs_generation": True,
+            "target_key": target_key,
+            "snapshot_hash": snap,
+        }
+
     if cached and not stream:
         # Re-shape to match LaneBriefResult dict.
         return {
@@ -215,6 +247,179 @@ def lane_brief(
         )
 
         yield _sse("final_brief", _result_to_dict(result))
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── country brief ─────────────────────────────────────────────────────────
+
+
+def _country_result_to_dict(result: CountryBriefResult) -> dict:
+    return result.model_dump(mode="json")
+
+
+@router.get("/country-brief/{m49}")
+def country_brief(
+    m49: int,
+    stream: bool = Query(False, description="Stream sub-agent events as SSE."),
+    verify: Literal["strict", "fast", "off"] = Query(
+        "strict",
+        description=(
+            "Reflection mode. strict = signal + band verification with caveat "
+            "aggregation. fast = annotate only. off = skip."
+        ),
+    ),
+    refresh: bool = Query(False, description="Bypass cache."),
+    only_cached: bool = Query(
+        False,
+        description=(
+            "When true, return cached brief if present or "
+            "{cache_hit: false, needs_generation: true} without invoking the LLM."
+        ),
+    ),
+    state: AppState = Depends(get_state),
+):
+    """Two-specialist country brief (inbound + outbound + synthesiser).
+
+    Cache key: ``(use_case='country_brief', target_key=str(m49), snapshot_hash)``.
+    """
+    target_key = str(m49)
+    snap = _state_snapshot_hash(state)
+
+    cached = (
+        None if refresh
+        else agent_cache.get_cached_brief("country_brief", target_key, snap)
+    )
+
+    if only_cached:
+        if cached:
+            return {
+                **cached["brief"],
+                "cache_hit": True,
+                "model": cached["model"],
+                "provider": cached["provider"],
+                "cost_usd": cached["cost_usd"],
+                "latency_ms": cached["latency_ms"],
+            }
+        return {
+            "cache_hit": False,
+            "needs_generation": True,
+            "target_key": target_key,
+            "snapshot_hash": snap,
+        }
+
+    if cached and not stream:
+        return {
+            **cached["brief"],
+            "cache_hit": True,
+            "model": cached["model"],
+            "provider": cached["provider"],
+            "cost_usd": cached["cost_usd"],
+            "latency_ms": cached["latency_ms"],
+        }
+
+    if not stream:
+        try:
+            result = generate_country_brief(m49, state=state, verify=verify)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+        brief_id = agent_cache.store_brief(
+            use_case="country_brief",
+            target_key=target_key,
+            snapshot_hash=snap,
+            brief=_country_result_to_dict(result),
+            model=result.model,
+            provider=result.provider,
+            cost_usd=result.cost_usd,
+            latency_ms=result.latency_ms,
+        )
+        agent_cache.append_audit(
+            use_case="country_brief",
+            target_key=target_key,
+            role="assistant",
+            content={"brief": result.brief.model_dump(), "tool_trace": result.tool_trace},
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+            brief_id=brief_id,
+        )
+        agent_cache.record_cost(
+            use_case="country_brief",
+            provider=result.provider,
+            model=result.model,
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+            usd=result.cost_usd,
+        )
+        return _country_result_to_dict(result)
+
+    async def event_stream() -> AsyncIterator[bytes]:
+        yield _sse("status", {"phase": "starting", "target_key": target_key, "snapshot": snap})
+
+        if cached:
+            yield _sse("final_brief", cached["brief"] | {"cache_hit": True})
+            return
+
+        try:
+            result = generate_country_brief(m49, state=state, verify=verify)
+        except ValueError as exc:
+            yield _sse("error", {"message": str(exc), "code": 404})
+            return
+        except RuntimeError as exc:
+            yield _sse("error", {"message": str(exc), "code": 502})
+            return
+
+        # Replay tool trace grouped by sub-agent phase.
+        for t in result.tool_trace:
+            yield _sse(
+                "tool_call",
+                {
+                    "name": t["name"],
+                    "args": t.get("args", {}),
+                    "latency_ms": t.get("latency_ms", 0),
+                    "phase": t.get("phase"),
+                },
+            )
+            yield _sse("tool_result", {"name": t["name"], "result": t.get("result", {})})
+
+        for note in result.brief.verifier_notes:
+            yield _sse("verifier_note", {"note": note})
+
+        brief_id = agent_cache.store_brief(
+            use_case="country_brief",
+            target_key=target_key,
+            snapshot_hash=snap,
+            brief=_country_result_to_dict(result),
+            model=result.model,
+            provider=result.provider,
+            cost_usd=result.cost_usd,
+            latency_ms=result.latency_ms,
+        )
+        agent_cache.append_audit(
+            use_case="country_brief",
+            target_key=target_key,
+            role="assistant",
+            content={"brief": result.brief.model_dump(), "tool_trace": result.tool_trace},
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+            brief_id=brief_id,
+        )
+        agent_cache.record_cost(
+            use_case="country_brief",
+            provider=result.provider,
+            model=result.model,
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+            usd=result.cost_usd,
+        )
+
+        yield _sse("final_brief", _country_result_to_dict(result))
 
     return StreamingResponse(
         event_stream(),

@@ -120,6 +120,139 @@ def _build_user_prompt(hs: str, dest: int, origin: int, corridor: dict[str, Any]
     )
 
 
+# ── forced-submit fallback helpers ────────────────────────────────────────
+
+
+def _summarise_tool_traces(traces: list[Any]) -> str:
+    """Compact one-line per tool call for the forced-submit context."""
+    if not traces:
+        return "(no tools called in the prior pass)"
+    lines: list[str] = []
+    for t in traces[:8]:
+        try:
+            name = getattr(t, "name", "?")
+            args = getattr(t, "args", {}) or {}
+            result = getattr(t, "result", {}) or {}
+            args_str = ", ".join(f"{k}={v!r}" for k, v in list(args.items())[:4])
+            if isinstance(result, dict):
+                ok = result.get("ok")
+                if "result" in result and isinstance(result["result"], dict):
+                    keys = list(result["result"].keys())[:6]
+                    summary = f"keys={keys}"
+                else:
+                    summary = f"ok={ok}"
+            else:
+                summary = "(opaque)"
+            lines.append(f"- {name}({args_str}) -> {summary}")
+        except Exception:
+            continue
+    return "\n".join(lines)
+
+
+def _build_force_submit_prompt(
+    hs: str,
+    dest: int,
+    origin: int,
+    corridor: dict[str, Any],
+    prior_text: str,
+    prior_findings: str,
+) -> str:
+    """Prompt for the forced submit_lane_brief retry.
+
+    The agent already explored on the first pass; we just need it to package
+    the answer as a structured tool call.
+    """
+    origin_country = corridor.get("origin_country") or f"M49={origin}"
+    dest_country = corridor.get("destination_country") or f"M49={dest}"
+    name = corridor.get("commodity_name") or f"HS {hs}"
+    head = (
+        f"You previously drafted a lane forensic brief but ended with text "
+        f"instead of calling submit_lane_brief. Package the work you already "
+        f"did as a single submit_lane_brief call.\n\n"
+        f"  Commodity: {name} (HS {hs})\n"
+        f"  Origin:    {origin_country} (M49 {origin})\n"
+        f"  Destination: {dest_country} (M49 {dest})\n\n"
+    )
+    prior_block = (
+        "Your previous draft (use these claims, refine the wording, and ensure "
+        "every numeric value appears in key_signals):\n\n"
+        f"{prior_text or '(no prior text — synthesise from findings below)'}\n"
+    )
+    findings_block = f"\nPrior tool findings:\n{prior_findings}\n"
+    return head + prior_block + findings_block
+
+
+# ── style scanner ─────────────────────────────────────────────────────────
+
+# Words / phrases the system prompt forbids. Case-insensitive substring match.
+_FORBIDDEN_PHRASES: tuple[str, ...] = (
+    "critically,",
+    "importantly,",
+    "notably,",
+    "in summary,",
+    "it is worth noting",
+    "it's worth noting",
+    "of particular interest",
+    "furthermore,",
+    "moreover,",
+    "interestingly,",
+    "consistent with",
+    "this corridor",
+    "this lane",
+    "researchers should",
+    "analysts should",
+    "could potentially",
+    "possibly indicate",
+)
+
+
+def _sanitise_style(text: str) -> tuple[str, list[str]]:
+    """Strip em-dashes / en-dashes and report forbidden phrases.
+
+    The em-dash replacement is mechanical (turns ` — ` into `, ` and ` – `
+    into `, `). Forbidden phrases are reported but not rewritten because
+    automatic replacement risks producing nonsense; the next agent run will
+    see the verifier note and self-correct.
+    """
+    if not text:
+        return text, []
+    notes: list[str] = []
+    cleaned = text
+    # Em-dash (U+2014) and en-dash (U+2013). Strip when used as punctuation
+    # surrounded by whitespace. A bare dash inside a word like "data-driven"
+    # already uses U+002D (hyphen) and is untouched.
+    if "—" in cleaned or "–" in cleaned:
+        notes.append("style: em/en-dash replaced with comma")
+        cleaned = cleaned.replace(" — ", ", ")
+        cleaned = cleaned.replace(" – ", ", ")
+        # Catch unspaced em-dash too.
+        cleaned = cleaned.replace("—", ", ")
+        cleaned = cleaned.replace("–", ", ")
+    lower = cleaned.lower()
+    for phrase in _FORBIDDEN_PHRASES:
+        if phrase in lower:
+            notes.append(f"style: forbidden phrase used: {phrase!r}")
+    return cleaned, notes
+
+
+def _sanitise_brief_style(brief: LaneBrief) -> list[str]:
+    """Apply style sanitisation in place across headline + body + caveats."""
+    all_notes: list[str] = []
+    new_headline, h_notes = _sanitise_style(brief.headline)
+    brief.headline = new_headline
+    all_notes.extend(h_notes)
+    new_body, b_notes = _sanitise_style(brief.body_markdown)
+    brief.body_markdown = new_body
+    all_notes.extend(b_notes)
+    new_caveats: list[str] = []
+    for c in brief.caveats:
+        nc, c_notes = _sanitise_style(c)
+        new_caveats.append(nc)
+        all_notes.extend(c_notes)
+    brief.caveats = new_caveats
+    return all_notes
+
+
 # ── reflection / verifier ─────────────────────────────────────────────────
 
 
@@ -127,7 +260,7 @@ def _verify_signals(
     brief: LaneBrief,
     corridor: dict[str, Any],
     *,
-    tolerance: float = 1e-3,
+    tolerance: float = 2e-2,
 ) -> list[str]:
     """Compare each CitedSignal against the corridor record. Return notes."""
     notes: list[str] = []
@@ -231,10 +364,10 @@ def generate_lane_brief(
     origin: int,
     *,
     state: Any,
-    verify: VerifyMode = "strict",
+    verify: VerifyMode = "fast",
     provider: Optional[ProviderName] = None,
     tier: Tier = "narrative",
-    max_iters: int = 8,
+    max_iters: int = 4,
 ) -> LaneBriefResult:
     """Run the lane brief draft + reflection pipeline.
 
@@ -252,7 +385,8 @@ def generate_lane_brief(
     user_prompt = _build_user_prompt(hs, dest, origin, corridor)
     prov = get_provider(provider)
 
-    # First pass: draft. Force the agent to end at submit_lane_brief.
+    # First pass: draft. The agent explores with read tools and is expected to
+    # finish by calling submit_lane_brief on its own.
     run: AgentRun = prov.tool_use_loop(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -260,16 +394,42 @@ def generate_lane_brief(
         state=state,
         tier=tier,
         max_iters=max_iters,
-        max_tokens=2200,
+        max_tokens=1500,
         temperature=0.3,
     )
 
+    # Fallback: if the model ended with prose instead of calling
+    # submit_lane_brief, do a forced second pass. The user prompt carries the
+    # prior draft text and any tool findings so the model has the same context
+    # it just produced — it just needs to package the answer as a tool call.
     if run.structured_output is None:
-        # Agent finished without calling submit_lane_brief; surface a stub.
-        raise RuntimeError(
-            "Agent did not call submit_lane_brief; transcript ended with text. "
-            "This usually means the tool budget was exhausted before drafting."
+        prior_text = (run.final_text or "").strip()
+        prior_findings = _summarise_tool_traces(run.tool_traces)
+        force_user_prompt = _build_force_submit_prompt(
+            hs, dest, origin, corridor, prior_text, prior_findings
         )
+        forced = prov.tool_use_loop(
+            system_prompt=system_prompt,
+            user_prompt=force_user_prompt,
+            tool_names=["submit_lane_brief"],
+            state=state,
+            tier=tier,
+            max_iters=2,
+            max_tokens=1500,
+            temperature=0.2,
+            force_tool="submit_lane_brief",
+        )
+        # Merge usage / traces so cost is honest.
+        run.tokens_in += forced.tokens_in
+        run.tokens_out += forced.tokens_out
+        run.cost_usd += forced.cost_usd
+        run.tool_traces.extend(forced.tool_traces)
+        if forced.structured_output is None:
+            raise RuntimeError(
+                "Agent failed to call submit_lane_brief even under forced tool "
+                "choice. Provider may be unhealthy."
+            )
+        run.structured_output = forced.structured_output
 
     try:
         brief = LaneBrief.model_validate(run.structured_output)
@@ -282,6 +442,7 @@ def generate_lane_brief(
     if verify != "off":
         notes = _verify_signals(brief, corridor)
         notes.extend(_check_required_caveats(corridor, brief))
+        notes.extend(_sanitise_brief_style(brief))
         brief.verifier_notes = notes
 
         # Strict mode: if there are hard mismatches, re-run with feedback.
@@ -299,7 +460,7 @@ def generate_lane_brief(
                 state=state,
                 tier=tier,
                 max_iters=max_iters,
-                max_tokens=2200,
+                max_tokens=1500,
                 temperature=0.2,
             )
             if run2.structured_output is not None:
@@ -308,6 +469,7 @@ def generate_lane_brief(
                     brief.verifier_notes = ["strict reflection triggered rerun"] + (
                         _verify_signals(brief, corridor)
                         + _check_required_caveats(corridor, brief)
+                        + _sanitise_brief_style(brief)
                     )
                     # Merge usage / cost.
                     run.tokens_in += run2.tokens_in

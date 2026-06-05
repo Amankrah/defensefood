@@ -199,20 +199,37 @@ def test_lane_brief_generates_and_verifies_clean_brief():
     assert hard_notes == []
 
 
-def test_verifier_auto_corrects_small_numerical_drift():
-    """Brief claims cvs=0.35 but engine has 0.345 — verifier auto-corrects."""
+def test_verifier_auto_corrects_meaningful_numerical_drift():
+    """Brief claims cvs=0.40 but engine has 0.345 (16% drift) → auto-correct.
+
+    Drift below the 2% relative-tolerance floor is ignored as rounding noise.
+    """
     state = _golden_state()
-    drifted = _make_brief(cvs_value=0.35)  # close enough that strict-rerun won't trigger
+    drifted = _make_brief(cvs_value=0.40)
     mock = _MockProvider(brief=drifted)
     with patch.object(lb_mod, "get_provider", return_value=mock):
         result = lb_mod.generate_lane_brief(
             "30771", 250, 724, state=state, verify="strict"
         )
-    # The CVS signal value got pulled back to the engine's number.
     cvs_sig = next(s for s in result.brief.key_signals if s.source_field == "cvs")
     assert abs(float(cvs_sig.value) - 0.345) < 1e-6
-    # And a note records the auto-correction.
     assert any("cvs" in n for n in result.brief.verifier_notes)
+
+
+def test_verifier_ignores_sub_two_percent_rounding_drift():
+    """Drift inside the tolerance band must not trigger rerun or correction."""
+    state = _golden_state()
+    drifted = _make_brief(cvs_value=0.35)  # 1.4% relative drift, below 2%
+    mock = _MockProvider(brief=drifted)
+    with patch.object(lb_mod, "get_provider", return_value=mock):
+        result = lb_mod.generate_lane_brief(
+            "30771", 250, 724, state=state, verify="strict"
+        )
+    # No correction → the value stays as the model wrote it.
+    cvs_sig = next(s for s in result.brief.key_signals if s.source_field == "cvs")
+    assert abs(float(cvs_sig.value) - 0.35) < 1e-6
+    # Only one provider call (no rerun).
+    assert len(mock.calls) == 1
 
 
 def test_verifier_injects_required_caveat_for_informational_lane():
@@ -319,5 +336,231 @@ def test_lane_brief_endpoint_caches_via_sqlite():
         assert body2.get("cache_hit") is True
         # Cached payload preserves the headline.
         assert body2["brief"]["headline"] == body1["brief"]["headline"]
+
+    app.dependency_overrides.clear()
+
+
+# ── style scanner ────────────────────────────────────────────────────────
+
+
+def test_style_sanitiser_strips_em_dashes_and_flags_phrases():
+    """Em-dashes get replaced; forbidden phrases get flagged in notes."""
+    from defensefood.agent.briefs.lane_brief import _sanitise_style
+
+    src = (
+        "Spain to Italy mussels — the strongest hazard lane — drove the queue. "
+        "Critically, alerts ran across every loaded year, consistent with "
+        "seasonal harvesting."
+    )
+    cleaned, notes = _sanitise_style(src)
+    assert "—" not in cleaned
+    assert "Spain to Italy mussels, the strongest hazard lane, drove the queue" in cleaned
+    # Forbidden phrases get logged but the text is left so the model self-corrects.
+    joined = "\n".join(notes)
+    assert "critically," in joined.lower()
+    assert "consistent with" in joined.lower()
+
+
+def test_style_sanitiser_runs_through_full_brief_pipeline():
+    """End-to-end: a brief with em-dashes gets cleaned during verify."""
+    state = _golden_state()
+    dirty = LaneBrief(
+        headline="Spanish mussels into France — strongest hazard lane.",
+        body_markdown=(
+            "CVS sits at 0.345 — driven by SCI 1.1 and 7 alerts. "
+            "Critically, HIS is 0.42 across the loaded years."
+        ),
+        key_signals=[
+            CitedSignal(name="CVS", source_field="cvs", value=0.345, band="med"),
+            CitedSignal(name="HIS", source_field="his", value=0.42, band="med"),
+            CitedSignal(name="Alerts", source_field="notification_count", value=7, band="unknown"),
+        ],
+        caveats=[],
+        confidence="med",
+    )
+    mock = _MockProvider(brief=dirty)
+    with patch.object(lb_mod, "get_provider", return_value=mock):
+        result = lb_mod.generate_lane_brief(
+            "30771", 250, 724, state=state, verify="fast"
+        )
+    assert "—" not in result.brief.headline
+    assert "—" not in result.brief.body_markdown
+    # Note: the prompt forbids "Critically,"; verifier records the violation.
+    style_notes = [n for n in result.brief.verifier_notes if n.startswith("style:")]
+    assert any("em/en-dash" in n for n in style_notes)
+    assert any("critically," in n.lower() for n in style_notes)
+
+
+# ── force_tool fallback ──────────────────────────────────────────────────
+
+
+class _TextThenForcedProvider:
+    """Mock provider that returns prose on the first call and structured output
+    only when ``force_tool="submit_lane_brief"`` is set.
+
+    Reproduces the failure mode where the agent ends with text instead of the
+    forced submit; the generator should detect that and retry with force_tool.
+    """
+
+    name = "anthropic"
+
+    def __init__(self, *, fallback_brief: LaneBrief) -> None:
+        self._brief = fallback_brief
+        self.calls: list[dict] = []
+
+    def tool_use_loop(self, *, force_tool: Optional[str] = None, **kw) -> AgentRun:
+        self.calls.append({"force": force_tool, "tools": kw.get("tool_names")})
+        if force_tool == "submit_lane_brief":
+            return AgentRun(
+                final_text="",
+                tool_traces=[],
+                messages=[],
+                tokens_in=200,
+                tokens_out=150,
+                cost_usd=0.001,
+                model="claude-sonnet-4-6",
+                provider="anthropic",
+                stop_reason="tool_use",
+                structured_output=self._brief.model_dump(),
+            )
+        # Without force, simulate the buggy path: prose, no structured output.
+        return AgentRun(
+            final_text=(
+                "I would summarise that CVS for this lane sits at 0.345 with "
+                "watchlist-band priority, driven by SCI 1.1 and 7 alerts."
+            ),
+            tool_traces=[],
+            messages=[],
+            tokens_in=1500,
+            tokens_out=400,
+            cost_usd=0.012,
+            model="claude-sonnet-4-6",
+            provider="anthropic",
+            stop_reason="end_turn",
+            structured_output=None,
+        )
+
+
+def test_force_tool_fallback_recovers_when_first_pass_ends_with_text():
+    """The first pass ends with text; the fallback forces submit_lane_brief
+    and the brief comes through with merged token counts."""
+    state = _golden_state()
+    provider = _TextThenForcedProvider(fallback_brief=_make_brief())
+    with patch.object(lb_mod, "get_provider", return_value=provider):
+        result = lb_mod.generate_lane_brief(
+            "30771", 250, 724, state=state, verify="off"
+        )
+    # Two calls: original draft + forced retry.
+    assert len(provider.calls) == 2
+    assert provider.calls[0]["force"] is None
+    assert provider.calls[1]["force"] == "submit_lane_brief"
+    assert provider.calls[1]["tools"] == ["submit_lane_brief"]
+    # Final brief is the structured one returned by the forced pass.
+    assert result.brief.headline.startswith("Spanish mussels")
+    # Cost / tokens merged across both passes.
+    assert result.tokens_in == 1500 + 200
+    assert result.tokens_out == 400 + 150
+    assert result.cost_usd == pytest.approx(0.012 + 0.001)
+
+
+class _AlwaysTextProvider:
+    """Provider that NEVER submits, even under force_tool. Tests the
+    ultimate-failure path."""
+
+    name = "anthropic"
+
+    def tool_use_loop(self, *, force_tool: Optional[str] = None, **kw) -> AgentRun:
+        return AgentRun(
+            final_text="(text, no submit ever)",
+            tool_traces=[],
+            messages=[],
+            tokens_in=100,
+            tokens_out=50,
+            cost_usd=0.001,
+            model="claude-sonnet-4-6",
+            provider="anthropic",
+            stop_reason="end_turn",
+            structured_output=None,
+        )
+
+
+def test_force_tool_fallback_raises_when_provider_keeps_failing():
+    """Both passes return text → RuntimeError surfaces to the endpoint."""
+    state = _golden_state()
+    with patch.object(lb_mod, "get_provider", return_value=_AlwaysTextProvider()):
+        with pytest.raises(RuntimeError, match="forced tool choice"):
+            lb_mod.generate_lane_brief("30771", 250, 724, state=state, verify="off")
+
+
+# ── only_cached endpoint ─────────────────────────────────────────────────
+
+
+def test_only_cached_returns_needs_generation_without_calling_provider():
+    """only_cached=true must not invoke the provider when no cache row exists."""
+    from fastapi.testclient import TestClient
+    from defensefood.api.main import app
+    import defensefood.api.dependencies as deps
+
+    deps._state = None
+    state = _golden_state()
+    from defensefood.models.scores import ScoringConfig
+    state.scoring_config = ScoringConfig()
+    state.trade_period = 2023
+
+    app.dependency_overrides[deps.get_state] = lambda: state
+
+    # Patch get_provider so that any LLM call would explode loudly. The test
+    # asserts only_cached short-circuits before reaching it.
+    def _explode(*a, **k):  # noqa: ARG001
+        raise AssertionError("provider invoked on only_cached probe")
+
+    client = TestClient(app)
+    with patch.object(lb_mod, "get_provider", side_effect=_explode):
+        r = client.get(
+            "/api/v1/agent/lane-brief/30771/250/724?only_cached=true&verify=off"
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["cache_hit"] is False
+    assert body["needs_generation"] is True
+    assert body["target_key"] == "30771/250/724"
+    assert "snapshot_hash" in body
+
+    app.dependency_overrides.clear()
+
+
+def test_only_cached_returns_brief_when_cache_hits():
+    """After a first call populates cache, only_cached returns the stored brief."""
+    from fastapi.testclient import TestClient
+    from defensefood.api.main import app
+    import defensefood.api.dependencies as deps
+
+    deps._state = None
+    state = _golden_state()
+    from defensefood.models.scores import ScoringConfig
+    state.scoring_config = ScoringConfig()
+    state.trade_period = 2023
+
+    app.dependency_overrides[deps.get_state] = lambda: state
+
+    mock = _MockProvider(brief=_make_brief())
+    client = TestClient(app)
+    with patch.object(lb_mod, "get_provider", return_value=mock):
+        # Populate cache.
+        r1 = client.get("/api/v1/agent/lane-brief/30771/250/724?verify=off")
+        assert r1.status_code == 200
+
+    # Now only_cached must hit, with no provider invocation.
+    def _explode(*a, **k):  # noqa: ARG001
+        raise AssertionError("provider invoked on only_cached after cache populated")
+
+    with patch.object(lb_mod, "get_provider", side_effect=_explode):
+        r2 = client.get(
+            "/api/v1/agent/lane-brief/30771/250/724?only_cached=true&verify=off"
+        )
+    assert r2.status_code == 200
+    body = r2.json()
+    assert body["cache_hit"] is True
+    assert body["brief"]["headline"].startswith("Spanish mussels")
 
     app.dependency_overrides.clear()

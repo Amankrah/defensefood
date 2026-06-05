@@ -408,11 +408,9 @@ def get_hazard_probability(args: CorridorKey, *, state: Any) -> dict[str, Any]:
 @tool(description="On-demand Section 5 trade-flow metrics (z_uv, z_volume, MTD, ΔHHI, ΔOCS) for a corridor.")
 def get_trade_anomalies(args: CorridorKey, *, state: Any) -> dict[str, Any]:
     """Compute trade anomalies (slower; uses trade_df)."""
-    from defensefood.api.routers.corridors import (
-        get_corridor_trade_anomalies as _impl,
-    )
+    from defensefood.api.routers.corridors import get_trade_anomalies as _impl
 
-    return _impl(args.commodity_hs, args.destination_m49, args.origin_m49, state=state)
+    return _impl(args.commodity_hs, args.destination_m49, args.origin_m49, state)
 
 
 class TimeSeriesArgs(BaseModel):

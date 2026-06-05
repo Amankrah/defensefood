@@ -57,15 +57,111 @@ export interface LaneBriefResponse {
   tool_trace: ToolTrace[];
 }
 
+// ── country brief (Phase 2) ───────────────────────────────────────────────
+
+export interface CountryBrief {
+  headline: string;
+  inbound_markdown: string;
+  outbound_markdown: string;
+  key_signals: CitedSignal[];
+  notable_lanes: string[];
+  caveats: string[];
+  confidence: Confidence;
+  verifier_notes: string[];
+  sub_agent_notes: string[];
+}
+
+export interface CountryBriefResponse {
+  brief: CountryBrief;
+  m49: number;
+  provider: string;
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  latency_ms: number;
+  cache_hit: boolean;
+  tool_trace: (ToolTrace & { phase?: string })[];
+}
+
 // ── SSE event types ───────────────────────────────────────────────────────
 
+/**
+ * One streaming event from any brief endpoint. ``final_brief`` carries the
+ * provider-specific response (lane or country); callers narrow with a runtime
+ * shape check (e.g. ``"corridor_key" in response``).
+ */
 export type AgentEvent =
   | { kind: "status"; phase: string; target_key?: string; snapshot?: string }
-  | { kind: "tool_call"; name: string; args: Record<string, unknown>; latency_ms: number }
+  | {
+      kind: "tool_call";
+      name: string;
+      args: Record<string, unknown>;
+      latency_ms: number;
+      phase?: string;
+    }
   | { kind: "tool_result"; name: string; result: ToolTrace["result"] }
   | { kind: "verifier_note"; note: string }
-  | { kind: "final_brief"; response: LaneBriefResponse & { cache_hit?: boolean } }
+  | {
+      kind: "final_brief";
+      response:
+        | (LaneBriefResponse & { cache_hit?: boolean })
+        | (CountryBriefResponse & { cache_hit?: boolean });
+    }
   | { kind: "error"; message: string; code: number };
+
+// ── cache-only probe ──────────────────────────────────────────────────────
+
+/**
+ * Result of a cache-only probe. Either a cached brief is returned, or the
+ * server indicates one would need to be generated. The probe never invokes
+ * the LLM, so it is safe to call on every page mount.
+ */
+export type LaneBriefProbe =
+  | { cached: true; response: LaneBriefResponse }
+  | { cached: false; needs_generation: true; target_key: string; snapshot_hash: string };
+
+export type CountryBriefProbe =
+  | { cached: true; response: CountryBriefResponse }
+  | { cached: false; needs_generation: true; target_key: string; snapshot_hash: string };
+
+export async function probeLaneBrief(
+  hs: string,
+  dest: number,
+  origin: number
+): Promise<LaneBriefProbe> {
+  const url = `${API_BASE}/agent/lane-brief/${encodeURIComponent(
+    hs
+  )}/${dest}/${origin}?only_cached=true`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lane brief probe ${res.status}: ${res.statusText}`);
+  const body = (await res.json()) as Record<string, unknown>;
+  if (body.cache_hit === false && body.needs_generation === true) {
+    return {
+      cached: false,
+      needs_generation: true,
+      target_key: String(body.target_key ?? ""),
+      snapshot_hash: String(body.snapshot_hash ?? ""),
+    };
+  }
+  return { cached: true, response: body as unknown as LaneBriefResponse };
+}
+
+export async function probeCountryBrief(m49: number): Promise<CountryBriefProbe> {
+  const url = `${API_BASE}/agent/country-brief/${m49}?only_cached=true`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Country brief probe ${res.status}: ${res.statusText}`);
+  const body = (await res.json()) as Record<string, unknown>;
+  if (body.cache_hit === false && body.needs_generation === true) {
+    return {
+      cached: false,
+      needs_generation: true,
+      target_key: String(body.target_key ?? ""),
+      snapshot_hash: String(body.snapshot_hash ?? ""),
+    };
+  }
+  return { cached: true, response: body as unknown as CountryBriefResponse };
+}
 
 // ── non-streaming fetch ───────────────────────────────────────────────────
 
@@ -197,6 +293,7 @@ function parseSseFrame(raw: string): AgentEvent | null {
         name: String(obj.name ?? ""),
         args: (obj.args as Record<string, unknown>) ?? {},
         latency_ms: Number(obj.latency_ms ?? 0),
+        phase: obj.phase as string | undefined,
       };
     case "tool_result":
       return {
@@ -237,4 +334,82 @@ export async function fetchTodayCosts(): Promise<{ rows: CostLedgerRow[] }> {
   const res = await fetch(`${API_BASE}/agent/costs/today`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Costs ${res.status}`);
   return res.json();
+}
+
+// ── country brief streamer + fetch ────────────────────────────────────────
+
+export async function fetchCountryBrief(
+  m49: number,
+  opts?: { verify?: VerifyMode; refresh?: boolean }
+): Promise<CountryBriefResponse> {
+  const params = new URLSearchParams();
+  if (opts?.verify) params.set("verify", opts.verify);
+  if (opts?.refresh) params.set("refresh", "true");
+  const qs = params.toString();
+  const url = `${API_BASE}/agent/country-brief/${m49}${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (body.detail) detail = body.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`Country brief ${res.status}: ${detail}`);
+  }
+  return res.json();
+}
+
+export async function* streamCountryBrief(
+  m49: number,
+  opts: { verify?: VerifyMode; refresh?: boolean; signal?: AbortSignal } = {}
+): AsyncGenerator<AgentEvent, void, void> {
+  const params = new URLSearchParams();
+  params.set("stream", "true");
+  if (opts.verify) params.set("verify", opts.verify);
+  if (opts.refresh) params.set("refresh", "true");
+  const url = `${API_BASE}/agent/country-brief/${m49}?${params.toString()}`;
+
+  const res = await fetch(url, {
+    cache: "no-store",
+    headers: { Accept: "text/event-stream" },
+    signal: opts.signal,
+  });
+  if (!res.ok || !res.body) {
+    yield {
+      kind: "error",
+      message: `HTTP ${res.status}: ${res.statusText}`,
+      code: res.status,
+    };
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const parsed = parseSseFrame(raw);
+        if (parsed) yield parsed;
+      }
+    }
+  } catch (e) {
+    if ((e as { name?: string }).name === "AbortError") return;
+    throw e;
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* noop */
+    }
+  }
 }

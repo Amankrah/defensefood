@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   ChevronDown,
   ChevronRight,
@@ -9,6 +10,8 @@ import {
   CheckCircle2,
   RefreshCw,
   Activity,
+  Globe2,
+  Send,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -16,44 +19,38 @@ import remarkGfm from "remark-gfm";
 import {
   type AgentEvent,
   type CitedSignal,
-  type LaneBriefResponse,
+  type CountryBrief,
+  type CountryBriefResponse,
   type ToolTrace,
-  probeLaneBrief,
-  streamLaneBrief,
+  probeCountryBrief,
+  streamCountryBrief,
 } from "@/lib/agentApi";
 
-interface BriefCardProps {
-  /** Corridor identity. */
-  commodity_hs: string;
-  destination_m49: number;
-  origin_m49: number;
-  /** Default verify mode passed to the agent endpoint. */
+interface CountryBriefCardProps {
+  m49: number;
   defaultVerify?: "strict" | "fast" | "off";
 }
 
 interface LoadState {
   phase: "probing" | "needs_generation" | "streaming" | "ready" | "error";
   status?: string;
-  toolCalls: ToolTrace[];
+  toolCalls: (ToolTrace & { phase?: string })[];
   verifierNotes: string[];
-  response?: LaneBriefResponse;
+  response?: CountryBriefResponse;
   errorMessage?: string;
 }
 
 /**
- * Lane forensic AI brief tile.
+ * Country forensic AI brief tile.
  *
- * Renders the streamed brief at the top of the Lane forensic report. Shows
- * progress while the agent runs (tool calls, verifier notes), then the brief
- * markdown plus a collapsible "Show evidence" panel with the cited signals
- * and the tool trace.
+ * Two halves: inbound (ACEP, top inbound lanes) and outbound (ORPS top
+ * commodities). Sub-agent trace is grouped in the evidence expander by
+ * phase: inbound, outbound, synthesiser.
  */
-export default function BriefCard({
-  commodity_hs,
-  destination_m49,
-  origin_m49,
+export default function CountryBriefCard({
+  m49,
   defaultVerify = "strict",
-}: BriefCardProps) {
+}: CountryBriefCardProps) {
   const [state, setState] = useState<LoadState>({
     phase: "probing",
     toolCalls: [],
@@ -67,18 +64,17 @@ export default function BriefCard({
     abortRef.current = ctrl;
     setState({
       phase: "streaming",
-      status: "Consulting the engine…",
+      status: "Briefing two specialists in parallel…",
       toolCalls: [],
       verifierNotes: [],
     });
     (async () => {
       try {
-        for await (const ev of streamLaneBrief(
-          commodity_hs,
-          destination_m49,
-          origin_m49,
-          { verify: defaultVerify, refresh, signal: ctrl.signal }
-        )) {
+        for await (const ev of streamCountryBrief(m49, {
+          verify: defaultVerify,
+          refresh,
+          signal: ctrl.signal,
+        })) {
           setState((prev) => reduceEvent(prev, ev));
           if (ev.kind === "final_brief" || ev.kind === "error") break;
         }
@@ -94,18 +90,15 @@ export default function BriefCard({
     })();
   };
 
-  // Mount: cheap cache probe. Only render a stored brief automatically.
-  // Generation requires the explicit Generate button to control cost.
+  // Mount: cheap cache probe. Multi-agent country brief is more expensive
+  // than the lane brief (2 specialists + synthesiser), so generation is
+  // strictly opt-in behind the Generate button.
   useEffect(() => {
     let cancelled = false;
     setState({ phase: "probing", toolCalls: [], verifierNotes: [] });
     (async () => {
       try {
-        const probe = await probeLaneBrief(
-          commodity_hs,
-          destination_m49,
-          origin_m49
-        );
+        const probe = await probeCountryBrief(m49);
         if (cancelled) return;
         if (probe.cached) {
           setState({
@@ -119,11 +112,9 @@ export default function BriefCard({
         }
       } catch (e) {
         if (cancelled) return;
-        // Probe failure is non-fatal; treat as "needs generation" so the user
-        // can still try. Surface the message only if generation also fails.
         setState({ phase: "needs_generation", toolCalls: [], verifierNotes: [] });
         // eslint-disable-next-line no-console
-        console.warn("BriefCard probe failed", e);
+        console.warn("CountryBriefCard probe failed", e);
       }
     })();
     return () => {
@@ -131,7 +122,7 @@ export default function BriefCard({
       abortRef.current?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [commodity_hs, destination_m49, origin_m49]);
+  }, [m49]);
 
   const brief = state.response?.brief;
   const isLoading = state.phase === "streaming";
@@ -141,17 +132,17 @@ export default function BriefCard({
       className={`rounded-2xl border bg-gradient-to-br shadow-sm transition ${
         state.phase === "error"
           ? "border-red-200 from-red-50/50 to-white"
-          : "border-blue-200 from-blue-50/50 to-white"
+          : "border-violet-200 from-violet-50/50 to-white"
       }`}
     >
       {/* Header row */}
       <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-3">
         <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-sm">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-purple-600 text-white shadow-sm">
             <Sparkles size={14} strokeWidth={2.25} aria-hidden />
           </span>
-          <span className="text-xs font-semibold uppercase tracking-wider text-blue-700">
-            AI forensic brief
+          <span className="text-xs font-semibold uppercase tracking-wider text-violet-700">
+            AI country brief
           </span>
           {state.response?.cache_hit && (
             <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
@@ -184,7 +175,7 @@ export default function BriefCard({
       </div>
 
       {/* Body */}
-      <div className="space-y-3 px-5 py-4">
+      <div className="space-y-4 px-5 py-4">
         {state.phase === "probing" && (
           <p className="flex items-center gap-2 text-xs text-slate-500">
             <Activity size={12} className="animate-pulse" aria-hidden />
@@ -196,18 +187,18 @@ export default function BriefCard({
           <div className="flex items-start justify-between gap-3">
             <div className="text-xs text-slate-600">
               <p className="font-medium text-slate-800">
-                No brief on file for this lane yet.
+                No country brief on file yet.
               </p>
               <p className="mt-1 text-[11px] text-slate-500">
-                Generating a brief calls the AI subsystem (typical cost a
-                fraction of a cent, takes 5 to 15 seconds). Stored after the
-                first run so re-visits are free.
+                A country brief runs two specialist agents (inbound and outbound)
+                in parallel, then a synthesiser. Typical wall-clock 10 to 20
+                seconds; cached after the first run so re-visits are free.
               </p>
             </div>
             <button
               type="button"
               onClick={() => run(false)}
-              className="shrink-0 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:brightness-110"
+              className="shrink-0 rounded-lg bg-gradient-to-br from-violet-600 to-purple-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:brightness-110"
             >
               <Sparkles size={12} className="mr-1 inline" aria-hidden />
               Generate brief
@@ -251,11 +242,31 @@ export default function BriefCard({
               cached={state.response?.cache_hit ?? false}
             />
 
-            <div className="prose prose-sm max-w-none text-slate-700">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {brief.body_markdown}
-              </ReactMarkdown>
-            </div>
+            <HalfBlock
+              label="Inbound"
+              icon={Globe2}
+              colour="indigo"
+              markdown={brief.inbound_markdown}
+            />
+            <HalfBlock
+              label="Outbound"
+              icon={Send}
+              colour="emerald"
+              markdown={brief.outbound_markdown}
+            />
+
+            {brief.notable_lanes.length > 0 && (
+              <div className="rounded-lg border border-slate-100 bg-slate-50/70 p-3">
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Notable lanes referenced
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {brief.notable_lanes.map((lane) => (
+                    <LaneChip key={lane} lane={lane} />
+                  ))}
+                </div>
+              </div>
+            )}
 
             {brief.caveats.length > 0 && (
               <ul className="space-y-1 rounded-lg border border-amber-100 bg-amber-50/50 p-3 text-[11px] text-amber-900">
@@ -272,6 +283,7 @@ export default function BriefCard({
               signals={brief.key_signals}
               toolCalls={state.toolCalls.length > 0 ? state.toolCalls : state.response?.tool_trace ?? []}
               verifierNotes={brief.verifier_notes}
+              subAgentNotes={brief.sub_agent_notes}
             />
           </>
         )}
@@ -294,11 +306,16 @@ function reduceEvent(prev: LoadState, ev: AgentEvent): LoadState {
         status: `consulting ${ev.name}…`,
         toolCalls: [
           ...prev.toolCalls,
-          { name: ev.name, args: ev.args, result: { ok: true }, latency_ms: ev.latency_ms },
+          {
+            name: ev.name,
+            args: ev.args,
+            result: { ok: true },
+            latency_ms: ev.latency_ms,
+            phase: ev.phase,
+          },
         ],
       };
     case "tool_result": {
-      // Attach the result to the most recent tool call of that name.
       const idx = [...prev.toolCalls]
         .map((t, i) => ({ t, i }))
         .reverse()
@@ -310,13 +327,19 @@ function reduceEvent(prev: LoadState, ev: AgentEvent): LoadState {
     }
     case "verifier_note":
       return { ...prev, verifierNotes: [...prev.verifierNotes, ev.note] };
-    case "final_brief":
-      return {
-        ...prev,
-        phase: "ready",
-        status: undefined,
-        response: ev.response as LaneBriefResponse,
-      };
+    case "final_brief": {
+      const resp = ev.response as CountryBriefResponse;
+      // Discriminate: country briefs have m49 + brief.inbound_markdown.
+      if ("m49" in resp && "inbound_markdown" in resp.brief) {
+        return {
+          ...prev,
+          phase: "ready",
+          status: undefined,
+          response: resp,
+        };
+      }
+      return prev;
+    }
     case "error":
       return {
         ...prev,
@@ -333,13 +356,63 @@ function reduceEvent(prev: LoadState, ev: AgentEvent): LoadState {
 /* Sub-components                                                       */
 /* ──────────────────────────────────────────────────────────────────── */
 
+function HalfBlock({
+  label,
+  icon: Icon,
+  colour,
+  markdown,
+}: {
+  label: string;
+  icon: typeof Globe2;
+  colour: "indigo" | "emerald";
+  markdown: string;
+}) {
+  if (!markdown || markdown.trim().length === 0) return null;
+  const ring =
+    colour === "indigo"
+      ? "border-indigo-100 bg-indigo-50/40"
+      : "border-emerald-100 bg-emerald-50/40";
+  const text =
+    colour === "indigo" ? "text-indigo-700" : "text-emerald-700";
+  return (
+    <div className={`rounded-lg border p-3 ${ring}`}>
+      <p className={`mb-1 inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider ${text}`}>
+        <Icon size={11} aria-hidden /> {label}
+      </p>
+      <div className="prose prose-sm max-w-none text-slate-700">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+      </div>
+    </div>
+  );
+}
+
+function LaneChip({ lane }: { lane: string }) {
+  const parts = lane.split("/");
+  if (parts.length !== 3) {
+    return (
+      <span className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] text-slate-700">
+        {lane}
+      </span>
+    );
+  }
+  const [hs, dest, origin] = parts;
+  return (
+    <Link
+      href={`/dashboard/corridors/${hs}/${dest}/${origin}`}
+      className="rounded border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-slate-700 hover:bg-blue-50 hover:text-blue-700"
+    >
+      {lane}
+    </Link>
+  );
+}
+
 function ProgressTrace({
   status,
   toolCalls,
   verifierNotes,
 }: {
   status?: string;
-  toolCalls: ToolTrace[];
+  toolCalls: (ToolTrace & { phase?: string })[];
   verifierNotes: string[];
 }) {
   return (
@@ -354,7 +427,11 @@ function ProgressTrace({
         <ul className="space-y-0.5 font-mono text-[11px] text-slate-500">
           {toolCalls.map((t, i) => (
             <li key={i}>
-              <span className="text-slate-400">→</span> {t.name}
+              <span className="text-slate-400">→</span>{" "}
+              {t.phase && (
+                <span className="text-[10px] text-violet-600">[{t.phase}]</span>
+              )}{" "}
+              {t.name}
               {t.result.ok === false && (
                 <span className="ml-1 text-red-500">(error)</span>
               )}
@@ -387,15 +464,11 @@ function ConfidenceLine({
   const Icon = confidence === "low" ? AlertTriangle : CheckCircle2;
   return (
     <div className="flex items-center gap-2 text-[11px]">
-      <span
-        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium ${colour}`}
-      >
+      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium ${colour}`}>
         <Icon size={11} aria-hidden /> Confidence: {confidence}
       </span>
       {cached && (
-        <span className="text-slate-500">
-          Brief reused from snapshot cache. Click ↻ to regenerate.
-        </span>
+        <span className="text-slate-500">Reused from snapshot cache.</span>
       )}
     </div>
   );
@@ -405,10 +478,12 @@ function Evidence({
   signals,
   toolCalls,
   verifierNotes,
+  subAgentNotes,
 }: {
   signals: CitedSignal[];
-  toolCalls: ToolTrace[];
+  toolCalls: (ToolTrace & { phase?: string })[];
   verifierNotes: string[];
+  subAgentNotes: string[];
 }) {
   return (
     <details className="group rounded-lg border border-slate-100 bg-slate-50/70">
@@ -420,7 +495,19 @@ function Evidence({
       </summary>
 
       <div className="space-y-3 border-t border-slate-200 px-3 py-3 text-[11px] text-slate-700">
-        {/* Signals table */}
+        {subAgentNotes.length > 0 && (
+          <div>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Sub-agent trace
+            </p>
+            <ul className="space-y-0.5 text-[10px] text-violet-700">
+              {subAgentNotes.map((n, i) => (
+                <li key={i}>· {n}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div>
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
             Cited signals
@@ -453,20 +540,24 @@ function Evidence({
           </table>
         </div>
 
-        {/* Tool trace */}
         {toolCalls.length > 0 && (
           <div>
             <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              Tool trace
+              Tool trace (by phase)
             </p>
             <ul className="space-y-1 font-mono text-[10px] text-slate-600">
               {toolCalls.map((t, i) => (
                 <li key={i}>
                   <span className="text-slate-400">{String(i + 1).padStart(2, "0")}</span>{" "}
+                  {t.phase && (
+                    <span className="mr-1 inline-block rounded bg-violet-100 px-1 text-[9px] text-violet-700">
+                      {t.phase}
+                    </span>
+                  )}
                   {t.name}
                   <span className="text-slate-400"> · {t.latency_ms} ms</span>
                   {t.result.ok === false && (
-                    <span className="ml-1 text-red-600">err: {t.result.error}</span>
+                    <span className="ml-1 text-red-600">err</span>
                   )}
                 </li>
               ))}
@@ -474,7 +565,6 @@ function Evidence({
           </div>
         )}
 
-        {/* Verifier notes */}
         {verifierNotes.length > 0 && (
           <div>
             <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
@@ -501,9 +591,7 @@ function BandPill({ band }: { band: CitedSignal["band"] }) {
     unknown: "bg-slate-100 text-slate-600",
   };
   return (
-    <span
-      className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${colour[band]}`}
-    >
+    <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${colour[band]}`}>
       {band}
     </span>
   );
