@@ -74,5 +74,8 @@ backend/script/output/*
 # FAOSTAT bulk downloads (place locally; see README / SECTION2_STATUS.md)
 backend/data/faostat/
 
+# Agent runtime cache (SQLite brief/audit DB — created per environment on startup)
+backend/data/agent.db
+
 # Optional: keep RASFF source in git if your team shares it; uncomment to exclude:
 # backend/updated_data_rasff_window.xlsx
