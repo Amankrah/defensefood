@@ -19,6 +19,7 @@ import {
   fetchAnomalyExplanation,
   probeAnomaly,
 } from "@/lib/agentApi";
+import { BriefSkeleton, useTimedBriefPhase } from "./LoadingSkeleton";
 
 interface Props {
   commodity_hs: string;
@@ -115,6 +116,13 @@ export default function AnomalyCard({
   const expl = state.response?.explanation;
   const verdictStyle = expl ? VERDICT_STYLE[expl.verdict] : VERDICT_STYLE.borderline;
   const isLoading = state.phase === "loading";
+  // Anomaly check usually lands in 30 to 90 seconds; faster timer than
+  // hypotheses since the schema is simpler and the verdict converges quickly.
+  const livePhase = useTimedBriefPhase(isLoading, {
+    drafting: 3_000,
+    verifying: 35_000,
+    finalising: 65_000,
+  });
 
   return (
     <section
@@ -207,10 +215,20 @@ export default function AnomalyCard({
         )}
 
         {state.phase === "loading" && (
-          <p className="text-xs text-slate-600">
-            <Activity size={12} className="mr-1 inline animate-pulse" aria-hidden />
-            Cross-checking peer lanes and per-period drift…
-          </p>
+          <BriefSkeleton
+            phase={livePhase}
+            toolCalls={[]}
+            variant="anomaly"
+            status={
+              livePhase === "reading"
+                ? "Reading lane profile and peer behaviour"
+                : livePhase === "drafting"
+                ? "Weighing anomaly evidence on both sides"
+                : livePhase === "verifying"
+                ? "Cross-checking peers and per-period drift"
+                : "Polishing the final read"
+            }
+          />
         )}
 
         {state.phase === "error" && (

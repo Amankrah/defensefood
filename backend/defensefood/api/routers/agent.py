@@ -946,6 +946,14 @@ def get_conversation(conversation_id: str):
     return convo
 
 
+# ── admin (Phase 6) — REMOVED ─────────────────────────────────────────────
+#
+# The admin and methodology endpoints used to live here. They were removed
+# in favour of a CLI tool (``python -m script.agent_admin``) so the HTTP
+# surface stays minimal and the system prompts + cost ledger are never
+# reachable over the network. See backend/script/agent_admin.py.
+
+
 # ── audit / evidence ──────────────────────────────────────────────────────
 
 

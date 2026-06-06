@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 /**
  * Loading skeletons used while the dashboard is fetching data.
  *
@@ -200,6 +202,31 @@ const BRIEF_PHASES: { id: BriefPhase; label: string; hint: string }[] = [
   },
 ];
 
+/** QA-specific phase labels. Same underlying BriefPhase ids; just nicer
+ * wording for the chat surface. */
+const QA_PHASES: { id: BriefPhase; label: string; hint: string }[] = [
+  {
+    id: "reading",
+    label: "Routing the question",
+    hint: "Classifying intent and extracting entities.",
+  },
+  {
+    id: "drafting",
+    label: "Gathering evidence",
+    hint: "Calling corpus tools for the data the answer needs.",
+  },
+  {
+    id: "verifying",
+    label: "Composing the answer",
+    hint: "Drafting the markdown reply with citations.",
+  },
+  {
+    id: "finalising",
+    label: "Finalising",
+    hint: "Sanitising prose and persisting the turn.",
+  },
+];
+
 /** Translate the latest SSE event name / status into a phase. */
 export function phaseFromStatus(
   status: string | undefined,
@@ -217,6 +244,43 @@ export function phaseFromStatus(
 }
 
 /**
+ * Auto-advance the phase stepper on a timer when a card has no real-time
+ * (SSE) signal. The defaults match the typical wall-clock shape of the
+ * non-streamed agent endpoints (hypotheses, anomaly): reading is short,
+ * drafting is the long phase, verifying / finalising arrive late.
+ *
+ * Pass `active=false` when not loading; the hook resets to "reading".
+ */
+export function useTimedBriefPhase(
+  active: boolean,
+  schedule: { drafting?: number; verifying?: number; finalising?: number } = {}
+): BriefPhase {
+  const draftingAt = schedule.drafting ?? 2_000;
+  const verifyingAt = schedule.verifying ?? 25_000;
+  const finalisingAt = schedule.finalising ?? 45_000;
+
+  const [phase, setPhase] = useState<BriefPhase>("reading");
+
+  useEffect(() => {
+    if (!active) {
+      setPhase("reading");
+      return;
+    }
+    setPhase("reading");
+    const timers: ReturnType<typeof setTimeout>[] = [
+      setTimeout(() => setPhase("drafting"), draftingAt),
+      setTimeout(() => setPhase("verifying"), verifyingAt),
+      setTimeout(() => setPhase("finalising"), finalisingAt),
+    ];
+    return () => {
+      timers.forEach(clearTimeout);
+    };
+  }, [active, draftingAt, verifyingAt, finalisingAt]);
+
+  return phase;
+}
+
+/**
  * Animated brief skeleton shown while the SSE stream is producing tokens.
  *
  * Three regions:
@@ -228,39 +292,49 @@ export function BriefSkeleton({
   phase,
   toolCalls,
   status,
+  variant = "brief",
 }: {
   phase: BriefPhase;
   toolCalls: { name: string; latency_ms: number }[];
   status?: string;
+  /**
+   * Tweak the shimmer block layout AND the phase-stepper labels to match
+   * the card the skeleton sits in.
+   * - "brief": single headline + two paragraph blocks (default).
+   * - "hypotheses": a summary line + three stacked hypothesis-row blocks.
+   * - "anomaly": verdict line + two paragraph sections + peer line.
+   * - "qa": chat-style answer shape: short answer + supporting paragraph.
+   */
+  variant?: "brief" | "hypotheses" | "anomaly" | "qa";
 }) {
-  const currentIdx = BRIEF_PHASES.findIndex((p) => p.id === phase);
+  const phaseSet = variant === "qa" ? QA_PHASES : BRIEF_PHASES;
+  const currentIdx = phaseSet.findIndex((p) => p.id === phase);
+  // When the caller hasn't supplied a status, fall back to the current
+  // phase's hint so the loading text always says something meaningful.
+  const displayStatus =
+    status ?? phaseSet[Math.max(currentIdx, 0)]?.hint ?? "";
   return (
     <div className="space-y-4">
-      <PhaseStepper currentIdx={currentIdx} />
+      <PhaseStepper currentIdx={currentIdx} phases={phaseSet} />
 
-      {/* Skeleton paragraphs */}
-      <div className="space-y-2">
-        <Shimmer className="h-5 w-[85%] rounded-md" />
-        <Shimmer className="h-3 w-24 rounded-full" />
-        <div className="space-y-2 pt-2">
-          <Shimmer className="h-3 w-full rounded-md" />
-          <Shimmer className="h-3 w-[96%] rounded-md" />
-          <Shimmer className="h-3 w-[92%] rounded-md" />
-          <Shimmer className="h-3 w-[78%] rounded-md" />
-        </div>
-        <div className="space-y-2 pt-2">
-          <Shimmer className="h-3 w-[94%] rounded-md" />
-          <Shimmer className="h-3 w-[88%] rounded-md" />
-        </div>
-      </div>
+      {/* Variant-shaped skeleton blocks */}
+      {variant === "hypotheses" ? (
+        <HypothesesSkeleton />
+      ) : variant === "anomaly" ? (
+        <AnomalySkeleton />
+      ) : variant === "qa" ? (
+        <QASkeleton />
+      ) : (
+        <DefaultBriefBlocks />
+      )}
 
       {/* Live trace */}
-      {(toolCalls.length > 0 || status) && (
+      {(toolCalls.length > 0 || displayStatus) && (
         <div className="rounded-md border border-slate-100 bg-slate-50/60 px-3 py-2 text-[10px]">
-          {status && (
+          {displayStatus && (
             <p className="flex items-center gap-1 font-medium text-slate-600">
               <Activity size={10} className="animate-pulse" aria-hidden />
-              <span>{status}</span>
+              <span>{displayStatus}</span>
             </p>
           )}
           {toolCalls.length > 0 && (
@@ -278,10 +352,116 @@ export function BriefSkeleton({
   );
 }
 
-function PhaseStepper({ currentIdx }: { currentIdx: number }) {
+function DefaultBriefBlocks() {
+  return (
+    <div className="space-y-2">
+      <Shimmer className="h-5 w-[85%] rounded-md" />
+      <Shimmer className="h-3 w-24 rounded-full" />
+      <div className="space-y-2 pt-2">
+        <Shimmer className="h-3 w-full rounded-md" />
+        <Shimmer className="h-3 w-[96%] rounded-md" />
+        <Shimmer className="h-3 w-[92%] rounded-md" />
+        <Shimmer className="h-3 w-[78%] rounded-md" />
+      </div>
+      <div className="space-y-2 pt-2">
+        <Shimmer className="h-3 w-[94%] rounded-md" />
+        <Shimmer className="h-3 w-[88%] rounded-md" />
+      </div>
+    </div>
+  );
+}
+
+function HypothesesSkeleton() {
+  return (
+    <div className="space-y-3">
+      {/* Pattern summary */}
+      <div className="space-y-1.5">
+        <Shimmer className="h-3 w-32 rounded-full" />
+        <Shimmer className="h-4 w-full rounded-md" />
+        <Shimmer className="h-4 w-[88%] rounded-md" />
+      </div>
+      {/* 3 stacked hypothesis-row placeholders */}
+      <div className="space-y-2 pt-1">
+        {[0, 1, 2].map((i) => (
+          <div
+            key={i}
+            className="flex items-center gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2"
+          >
+            <Shimmer className="h-3 w-3 rounded-full" />
+            <Shimmer className="h-4 flex-1 rounded-md" />
+            <Shimmer className="h-4 w-12 rounded-full" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QASkeleton() {
+  return (
+    <div className="space-y-2">
+      {/* Intent chip placeholder */}
+      <Shimmer className="h-3 w-28 rounded-full" />
+      {/* Lead sentence (the direct answer) */}
+      <Shimmer className="h-5 w-[92%] rounded-md" />
+      {/* Supporting paragraph */}
+      <div className="space-y-1.5 pt-1">
+        <Shimmer className="h-3 w-full rounded-md" />
+        <Shimmer className="h-3 w-[96%] rounded-md" />
+        <Shimmer className="h-3 w-[88%] rounded-md" />
+      </div>
+      {/* Potential table outline */}
+      <div className="space-y-1.5 pt-2">
+        <Shimmer className="h-2.5 w-24 rounded-full" />
+        <div className="flex gap-2">
+          <Shimmer className="h-3 flex-1 rounded-md" />
+          <Shimmer className="h-3 w-16 rounded-md" />
+          <Shimmer className="h-3 w-12 rounded-md" />
+        </div>
+        <div className="flex gap-2">
+          <Shimmer className="h-3 flex-1 rounded-md" />
+          <Shimmer className="h-3 w-16 rounded-md" />
+          <Shimmer className="h-3 w-12 rounded-md" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnomalySkeleton() {
+  return (
+    <div className="space-y-3">
+      <Shimmer className="h-3 w-40 rounded-full" />
+      <Shimmer className="h-5 w-[80%] rounded-md" />
+      {/* Why-this-stands-out section */}
+      <div className="space-y-1.5 pt-1">
+        <Shimmer className="h-3 w-32 rounded-full" />
+        <Shimmer className="h-3 w-full rounded-md" />
+        <Shimmer className="h-3 w-[94%] rounded-md" />
+        <Shimmer className="h-3 w-[86%] rounded-md" />
+      </div>
+      {/* Why-not section */}
+      <div className="space-y-1.5 pt-1">
+        <Shimmer className="h-3 w-44 rounded-full" />
+        <Shimmer className="h-3 w-[92%] rounded-md" />
+        <Shimmer className="h-3 w-[78%] rounded-md" />
+      </div>
+      {/* Peer line */}
+      <Shimmer className="h-3 w-[70%] rounded-md" />
+    </div>
+  );
+}
+
+function PhaseStepper({
+  currentIdx,
+  phases = BRIEF_PHASES,
+}: {
+  currentIdx: number;
+  phases?: { id: BriefPhase; label: string; hint: string }[];
+}) {
   return (
     <ol className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-      {BRIEF_PHASES.map((p, i) => {
+      {phases.map((p, i) => {
         const done = i < currentIdx;
         const active = i === currentIdx;
         const Icon = done ? CheckCircle2 : active ? Activity : Circle;
@@ -303,7 +483,7 @@ function PhaseStepper({ currentIdx }: { currentIdx: number }) {
               aria-hidden
             />
             <span className={`font-medium ${labelColour}`}>{p.label}</span>
-            {i < BRIEF_PHASES.length - 1 && (
+            {i < phases.length - 1 && (
               <span className="hidden text-slate-300 sm:inline" aria-hidden>
                 ›
               </span>

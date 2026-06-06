@@ -25,6 +25,7 @@ import {
   type ToolTrace,
   streamQA,
 } from "@/lib/agentApi";
+import { BriefSkeleton, type BriefPhase } from "./LoadingSkeleton";
 
 const STARTER_PROMPTS: string[] = [
   "Show corridors where Composite Vulnerability Score (CVS) is in the top band.",
@@ -422,29 +423,45 @@ function ChatBubble({ message }: { message: ChatMessage }) {
   );
 }
 
+/** Map the QA in-flight state to a BriefPhase so the shared phase-stepper
+ * lights up the right column. */
+function qaInflightPhase(live: InFlight): BriefPhase {
+  if (live.phase === "routing") return "reading";
+  if (live.phase === "done") return "finalising";
+  const last = live.toolCalls[live.toolCalls.length - 1];
+  // Once the agent has called any submit_ tool (or a verifier note has
+  // landed), we are past the evidence-gathering phase.
+  if (last?.name?.startsWith("submit_") || live.verifierNotes.length > 0) {
+    return "verifying";
+  }
+  return "drafting";
+}
+
 function InFlightBubble({ live }: { live: InFlight }) {
+  const phase = qaInflightPhase(live);
+  // The shared status copy in the skeleton already says "Routing the question",
+  // etc. We overlay something more specific when there's domain context.
+  const status = live.classification
+    ? `Intent: ${live.classification.intent}${
+        live.classification.in_scope ? "" : " (out of scope)"
+      }${
+        live.toolCalls.length > 0
+          ? ` · last tool: ${live.toolCalls[live.toolCalls.length - 1].name}`
+          : ""
+      }`
+    : live.status;
   return (
     <div className="flex justify-start">
-      <div className="max-w-[88%] space-y-2 rounded-2xl rounded-tl-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 shadow-sm">
-        <p className="inline-flex items-center gap-1.5 font-medium text-slate-700">
-          <Activity size={12} className="animate-pulse" aria-hidden />
-          {live.status}
-        </p>
-        {live.classification && (
-          <p className="text-[10px] text-slate-500">
-            Intent classified as <span className="font-medium">{live.classification.intent}</span>
-            {live.classification.in_scope ? "" : " (out of scope)"}
-          </p>
-        )}
-        {live.toolCalls.length > 0 && (
-          <ul className="space-y-0.5 font-mono text-[10px] text-slate-500">
-            {live.toolCalls.map((t, i) => (
-              <li key={i}>
-                <span className="text-slate-400">→</span> {t.name}
-              </li>
-            ))}
-          </ul>
-        )}
+      <div className="w-full max-w-[88%] rounded-2xl rounded-tl-md border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        <BriefSkeleton
+          phase={phase}
+          variant="qa"
+          status={status}
+          toolCalls={live.toolCalls.map((t) => ({
+            name: t.name,
+            latency_ms: t.latency_ms,
+          }))}
+        />
       </div>
     </div>
   );

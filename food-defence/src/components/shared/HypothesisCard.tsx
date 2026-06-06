@@ -20,6 +20,7 @@ import {
   fetchHypotheses,
   probeHypotheses,
 } from "@/lib/agentApi";
+import { BriefSkeleton, useTimedBriefPhase } from "./LoadingSkeleton";
 
 interface Props {
   commodity_hs: string;
@@ -90,6 +91,13 @@ export default function HypothesisCard({
 
   const hset = state.response?.hset;
   const isLoading = state.phase === "loading";
+  // Hypothesis generation typically takes 30 to 180 seconds; the timer
+  // advances phases on a schedule that matches Opus's typical wall-clock.
+  const livePhase = useTimedBriefPhase(isLoading, {
+    drafting: 3_000,
+    verifying: 60_000,
+    finalising: 120_000,
+  });
 
   return (
     <section className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50/40 to-white shadow-sm">
@@ -167,10 +175,20 @@ export default function HypothesisCard({
         )}
 
         {state.phase === "loading" && (
-          <p className="text-xs text-slate-600">
-            <Activity size={12} className="mr-1 inline animate-pulse" aria-hidden />
-            Drafting candidate explanations…
-          </p>
+          <BriefSkeleton
+            phase={livePhase}
+            toolCalls={[]}
+            variant="hypotheses"
+            status={
+              livePhase === "reading"
+                ? "Reading lane profile, alerts, and methodology"
+                : livePhase === "drafting"
+                ? "Composing 2 to 4 candidate explanations on Opus 4.7"
+                : livePhase === "verifying"
+                ? "Cross-checking evidence and caveats"
+                : "Polishing the final draft"
+            }
+          />
         )}
 
         {state.phase === "error" && (

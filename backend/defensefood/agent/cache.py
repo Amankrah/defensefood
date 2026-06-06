@@ -557,6 +557,187 @@ def count_messages(
     return int(row["n"])
 
 
+# ── admin / Phase 6 helpers ───────────────────────────────────────────────
+
+
+def brief_inventory(*, db_path: Optional[str] = None) -> list[dict[str, Any]]:
+    """Per-use_case brief counts, total cost, mean latency, last activity.
+
+    Used by the admin dashboard's overview tile.
+    """
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT use_case, "
+            "       COUNT(*) AS n, "
+            "       SUM(cost_usd) AS total_cost_usd, "
+            "       AVG(latency_ms) AS mean_latency_ms, "
+            "       MAX(created_at) AS last_at "
+            "FROM briefs "
+            "GROUP BY use_case "
+            "ORDER BY n DESC"
+        ).fetchall()
+    return [
+        {
+            "use_case": r["use_case"],
+            "n": int(r["n"]),
+            "total_cost_usd": float(r["total_cost_usd"] or 0.0),
+            "mean_latency_ms": float(r["mean_latency_ms"] or 0.0),
+            "last_at": float(r["last_at"]) if r["last_at"] is not None else None,
+        }
+        for r in rows
+    ]
+
+
+def cost_ledger_window(
+    *, days: int = 7, db_path: Optional[str] = None
+) -> list[dict[str, Any]]:
+    """Return cost_ledger rows for the last ``days`` days, ordered by day desc."""
+    from datetime import date as _date, timedelta as _td
+
+    cutoff = (_date.today() - _td(days=max(1, days) - 1)).isoformat()
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT day, use_case, provider, model, tokens_in, tokens_out, usd "
+            "FROM cost_ledger WHERE day >= ? ORDER BY day DESC, usd DESC",
+            (cutoff,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_briefs(
+    *,
+    use_case: Optional[str] = None,
+    limit: int = 50,
+    db_path: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Return the most recent briefs (header only — no full body JSON)."""
+    sql = (
+        "SELECT id, use_case, target_key, snapshot_hash, model, provider, "
+        "       cost_usd, latency_ms, created_at "
+        "FROM briefs "
+    )
+    params: list[Any] = []
+    if use_case:
+        sql += "WHERE use_case = ? "
+        params.append(use_case)
+    sql += "ORDER BY created_at DESC LIMIT ?"
+    params.append(int(limit))
+    with _connect(db_path) as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_brief_full(
+    brief_id: int, *, db_path: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    """Full brief row including the parsed brief_json. Used by audit view."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT id, use_case, target_key, snapshot_hash, brief_json, "
+            "       model, provider, cost_usd, latency_ms, created_at "
+            "FROM briefs WHERE id = ?",
+            (brief_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": int(row["id"]),
+        "use_case": row["use_case"],
+        "target_key": row["target_key"],
+        "snapshot_hash": row["snapshot_hash"],
+        "brief": json.loads(row["brief_json"]),
+        "model": row["model"],
+        "provider": row["provider"],
+        "cost_usd": float(row["cost_usd"]),
+        "latency_ms": int(row["latency_ms"]),
+        "created_at": float(row["created_at"]),
+    }
+
+
+def invalidate_brief_cache(
+    *,
+    use_case: Optional[str] = None,
+    target_key: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> int:
+    """Delete rows from the briefs cache. Returns the count deleted.
+
+    If both filters are None, refuses (would wipe the whole cache silently).
+    """
+    if not use_case and not target_key:
+        raise ValueError(
+            "invalidate_brief_cache: provide use_case and/or target_key; "
+            "refusing to wipe the whole table."
+        )
+    sql = "DELETE FROM briefs WHERE 1=1"
+    params: list[Any] = []
+    if use_case:
+        sql += " AND use_case = ?"
+        params.append(use_case)
+    if target_key:
+        sql += " AND target_key = ?"
+        params.append(target_key)
+    with _connect(db_path) as conn:
+        cur = conn.execute(sql, params)
+        deleted = cur.rowcount
+    return int(deleted or 0)
+
+
+def recent_verifier_notes(
+    *, limit: int = 30, db_path: Optional[str] = None
+) -> list[dict[str, Any]]:
+    """Pull the most recent verifier notes across all briefs.
+
+    Reads from audit_log content_json where verifier-style notes live. Used
+    by the admin dashboard to flag regressions ("which lanes had the most
+    sanitiser hits in the last 7 days?").
+    """
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT brief_id, use_case, target_key, content_json, created_at "
+            "FROM audit_log "
+            "WHERE role = 'assistant' "
+            "ORDER BY created_at DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        try:
+            content = json.loads(r["content_json"])
+        except (TypeError, ValueError):
+            continue
+        notes = _extract_verifier_notes(content)
+        if not notes:
+            continue
+        out.append(
+            {
+                "brief_id": int(r["brief_id"]) if r["brief_id"] is not None else None,
+                "use_case": r["use_case"],
+                "target_key": r["target_key"],
+                "notes": notes,
+                "created_at": float(r["created_at"]),
+            }
+        )
+    return out
+
+
+def _extract_verifier_notes(content: Any) -> list[str]:
+    """Walk known shapes to find verifier_notes lists."""
+    if not isinstance(content, dict):
+        return []
+    # Common nesting: {"brief": {"verifier_notes": [...]}, "tool_trace": [...]}
+    # or {"hset": {"verifier_notes": [...]}}, {"explanation": {...}}, etc.
+    for k in ("brief", "hset", "explanation"):
+        v = content.get(k)
+        if isinstance(v, dict) and isinstance(v.get("verifier_notes"), list):
+            return [str(n) for n in v["verifier_notes"]]
+    # Flat case.
+    v = content.get("verifier_notes")
+    if isinstance(v, list):
+        return [str(n) for n in v]
+    return []
+
+
 # ── snapshot hashing ──────────────────────────────────────────────────────
 
 
