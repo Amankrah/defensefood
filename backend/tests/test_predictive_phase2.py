@@ -372,9 +372,11 @@ def test_cli_accepts_lightgbm_choice(tmp_path, monkeypatch):
     assert len(walks) >= 1
 
 
-def test_cli_default_runs_all_three_forecasters(tmp_path, monkeypatch):
-    """No --forecaster flag → CLI runs persistence + chapter_median +
-    lightgbm."""
+def test_cli_default_runs_all_registered_forecasters(tmp_path, monkeypatch):
+    """No --forecaster flag → CLI runs every entry in
+    ``ALL_FORECASTER_NAMES``: persistence + chapter_median + lightgbm
+    + lightgbm_lite (the ablation that drops the commodity_hs categorical,
+    added after the 2026-06-07 backtest)."""
     import contextlib
     import io
 
@@ -400,6 +402,5 @@ def test_cli_default_runs_all_three_forecasters(tmp_path, monkeypatch):
     payload = json.loads(
         list(tmp_path.glob("predictive_eval_*.json"))[0].read_text(encoding="utf-8")
     )
-    assert set(payload["forecasters"].keys()) == {
-        "persistence", "chapter_median", "lightgbm"
-    }
+    from script.predictive import ALL_FORECASTER_NAMES
+    assert set(payload["forecasters"].keys()) == set(ALL_FORECASTER_NAMES)

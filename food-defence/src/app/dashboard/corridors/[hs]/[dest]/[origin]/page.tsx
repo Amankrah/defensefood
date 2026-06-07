@@ -61,6 +61,7 @@ import CvsComposition from "@/components/shared/CvsComposition";
 import BriefCard from "@/components/shared/BriefCard";
 import HypothesisCard from "@/components/shared/HypothesisCard";
 import AnomalyCard from "@/components/shared/AnomalyCard";
+import ForecastCard from "@/components/shared/ForecastCard";
 import { LaneForensicSkeleton } from "@/components/shared/LoadingSkeleton";
 
 const HAZARD_CATS: {
@@ -401,6 +402,14 @@ export default function LaneReport() {
         origin_m49={origin}
       />
       <AnomalyCard
+        commodity_hs={hs}
+        destination_m49={dest}
+        origin_m49={origin}
+      />
+
+      {/* Predictive epic Phase 3: next-period CVS forecast from the pooled
+          LightGBM forecaster trained at startup. Fast, no-LLM, always-on. */}
+      <ForecastCard
         commodity_hs={hs}
         destination_m49={dest}
         origin_m49={origin}

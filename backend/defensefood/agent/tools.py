@@ -831,6 +831,118 @@ def detect_clusters(args: DetectClustersArgs, *, state: Any) -> dict[str, Any]:
     }
 
 
+# ── Phase 3 of the predictive epic: forecaster tool ───────────────────────
+
+
+class PredictLaneArgs(BaseModel):
+    commodity_hs: str = Field(description="HS code, e.g. '30771' or '100630'.")
+    destination_m49: int = Field(description="UN M49 code for the destination country.")
+    origin_m49: int = Field(description="UN M49 code for the origin country.")
+
+
+@tool(
+    description=(
+        "Predict the next-period Composite Vulnerability Score (CVS) for a "
+        "lane using the production forecaster (pooled LightGBM with quantile "
+        "intervals). Returns target_period, cvs_point, cvs_low, cvs_high "
+        "(80% interval), direction, confidence, and the top drivers from the "
+        "trained model. Returns {ok: false, predictive_unavailable: true} "
+        "when the forecaster was not trained at startup."
+    )
+)
+def predict_lane_next_period(
+    args: PredictLaneArgs, *, state: Any
+) -> dict[str, Any]:
+    """Wrap the production forecaster for the agent + HTTP endpoint.
+
+    Reads the lane's full scored history up to the latest populated period,
+    builds the causal feature vector, and asks ``state.forecaster`` to
+    predict the next period.
+    """
+    forecaster = getattr(state, "forecaster", None)
+    if forecaster is None:
+        return {
+            "ok": False,
+            "predictive_unavailable": True,
+            "reason": (
+                "Forecaster was not trained at startup (no scored_history, "
+                "lightgbm install missing, or training failed). "
+                "Run `python -m script.predictive coverage` on the server."
+            ),
+        }
+
+    from defensefood.agent.predictive import extract_corridor_features
+    from defensefood.agent.predictive.forecaster import ForecastInput
+
+    history = getattr(state, "scored_history", None) or {}
+    populated = sorted(
+        int(p) for p, snap in history.items() if isinstance(snap, dict) and snap
+    )
+    if not populated:
+        return {
+            "ok": False,
+            "predictive_unavailable": True,
+            "reason": "Empty scored_history.",
+        }
+
+    lane_key = (
+        str(args.commodity_hs),
+        int(args.destination_m49),
+        int(args.origin_m49),
+    )
+    seq: list = []
+    for p in populated:
+        snap = history.get(p) or {}
+        if lane_key not in snap:
+            continue
+        fv = extract_corridor_features(
+            state,
+            commodity_hs=lane_key[0],
+            destination_m49=lane_key[1],
+            origin_m49=lane_key[2],
+            period=p,
+        )
+        if fv is not None:
+            seq.append(fv)
+    if not seq:
+        return {
+            "ok": False,
+            "no_history": True,
+            "reason": f"No scored history for lane {lane_key}.",
+        }
+
+    as_of = int(seq[-1].period)
+    query = ForecastInput(
+        commodity_hs=lane_key[0],
+        destination_m49=lane_key[1],
+        origin_m49=lane_key[2],
+        as_of_period=as_of,
+        history=seq,
+    )
+    out = forecaster.predict(query)
+
+    last = seq[-1]
+    return {
+        "ok": True,
+        "as_of_period": as_of,
+        "target_period": int(out.target_period),
+        "cvs_point": out.cvs_point,
+        "cvs_low": out.cvs_low,
+        "cvs_high": out.cvs_high,
+        "his_point": out.his_point,
+        "direction": out.direction,
+        "confidence": out.confidence,
+        "drivers": list(out.drivers or []),
+        "notes": list(out.notes or []),
+        "observed": {
+            "period": last.period,
+            "cvs": last.cvs,
+            "his": last.his,
+            "notification_count": last.notification_count,
+        },
+    }
+
+
 __all__ = [
     "TOOL_REGISTRY",
     "ToolSpec",

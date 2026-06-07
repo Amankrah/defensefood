@@ -8,7 +8,7 @@ that are loaded once at startup and shared across requests.
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -59,6 +59,13 @@ class AppState:
     # fields. Materialised by build_scored_history() after dependency_history
     # is in place. Lanes with one period only get one entry.
     scored_history: dict[int, dict[tuple[str, int, int], dict]] = field(default_factory=dict)
+    # Predictive epic Phase 3:
+    # Fitted forecaster trained on every period EXCEPT the latest, so it
+    # can predict the next period from the latest. None when training
+    # failed or lightgbm isn't installed.
+    forecaster: Optional[Any] = None
+    # The period the forecaster predicts (latest + 1).
+    forecast_target_period: int = 0
     # notifications_by_corridor[(commodity_hs, dest_m49, origin_m49)] -> list of raw RASFF rows
     notifications_by_corridor: dict[tuple[str, int, int], list[dict]] = field(default_factory=dict)
     # coverage: data-quality / coverage diagnostics
@@ -375,6 +382,53 @@ def _build_research_indices(state: AppState) -> None:
     except Exception as exc:  # noqa: BLE001 - never block startup on this
         logger.warning("build_scored_history failed: %s", exc)
         state.scored_history = {}
+
+    # Phase 3 of the predictive epic — train the production forecaster on
+    # every period except the latest so we can predict the latest + 1 at
+    # request time. Wrapped in try/except so a missing dependency or a
+    # degenerate training set never blocks startup. The agent tool and
+    # HTTP endpoint check ``state.forecaster is None`` and report
+    # ``predictive_unavailable`` gracefully when training was skipped.
+    #
+    # Production model = PERSISTENCE.
+    # The 2026-06-07 backtest (5 walks, 3503 labelled cases) showed
+    # persistence MAE 0.0215 vs LightGBM MAE 0.0249 — LightGBM 15.8% worse,
+    # and LightGBM's 80% interval covered only 56% of actuals (severely
+    # overconfident). Persistence covered 83% — near-perfect calibration.
+    # LightGBM remains available via ``python -m script.predictive backtest
+    # --forecaster lightgbm`` for further experimentation; the production
+    # ForecastCard + anomaly_explainer model_outlook use persistence.
+    PRODUCTION_FORECASTER = "persistence"
+
+    populated_periods = sorted(
+        p for p, snap in state.scored_history.items()
+        if isinstance(snap, dict) and snap
+    )
+    if len(populated_periods) >= 2:
+        try:
+            from defensefood.agent.predictive import build_forecaster
+            from defensefood.agent.predictive.eval_harness import prepare_forecaster
+
+            forecaster = build_forecaster(PRODUCTION_FORECASTER, state=state)
+            train_periods = populated_periods[:-1]
+            prepare_forecaster(
+                state, forecaster=forecaster, train_periods=train_periods
+            )
+            state.forecaster = forecaster
+            state.forecast_target_period = populated_periods[-1] + 1
+            logger.info(
+                "Predictive forecaster ready: target_period=%d, "
+                "train_periods=%s, model=%s",
+                state.forecast_target_period,
+                train_periods,
+                PRODUCTION_FORECASTER,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Forecaster training failed at startup (%s); predict tool "
+                "will report 'predictive_unavailable'.",
+                exc,
+            )
 
     refresh_coverage(state)
 

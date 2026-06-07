@@ -42,7 +42,12 @@ OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 
 # Forecaster names supported by the CLI. The factory in
 # ``defensefood.agent.predictive.baselines`` is the source of truth.
-ALL_FORECASTER_NAMES = ("persistence", "chapter_median", "lightgbm")
+ALL_FORECASTER_NAMES = (
+    "persistence",
+    "chapter_median",
+    "lightgbm",
+    "lightgbm_lite",
+)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -387,6 +392,169 @@ def cmd_history(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── subcommand: cliff ────────────────────────────────────────────────────
+
+
+def cmd_cliff(args: argparse.Namespace) -> int:
+    """Surface the lanes with the largest absolute CVS deltas between
+    ``period - 1`` and ``period``.
+
+    Built to investigate the 2026-06-07 backtest result where every
+    forecaster degraded sharply at 2023 (persistence MAE jumped from
+    0.012-0.020 to 0.040, direction accuracy collapsed to 51%).
+
+    If the chapter-median baseline is stable across years but per-lane
+    metrics shift dramatically in one year, the drift is per-lane — likely
+    a hazard-side event (new RASFF notifications on a subset of lanes)
+    rather than a corpus-wide structural change.
+    """
+    state = _bootstrap_state()
+    history = getattr(state, "scored_history", None) or {}
+    populated = sorted(
+        int(p) for p, snap in history.items() if isinstance(snap, dict) and snap
+    )
+    if not populated:
+        print("error: scored_history is empty.", file=sys.stderr)
+        return 1
+
+    target = int(args.period) if args.period else populated[-1]
+    if target not in populated:
+        print(
+            f"error: period {target} has no entries. "
+            f"Populated: {populated}",
+            file=sys.stderr,
+        )
+        return 1
+    prior_candidates = [p for p in populated if p < target]
+    if not prior_candidates:
+        print(
+            f"error: period {target} is the earliest in history; no delta possible.",
+            file=sys.stderr,
+        )
+        return 1
+    prior = prior_candidates[-1]
+
+    target_snap = history[target]
+    prior_snap = history[prior]
+
+    movers: list[dict[str, Any]] = []
+    for lane_key, target_entry in target_snap.items():
+        prior_entry = prior_snap.get(lane_key)
+        if prior_entry is None:
+            continue
+        try:
+            cvs_t = float(target_entry.get("cvs"))
+            cvs_p = float(prior_entry.get("cvs"))
+        except (TypeError, ValueError):
+            continue
+        delta = cvs_t - cvs_p
+        # Component deltas to help diagnose which side moved.
+        his_t = target_entry.get("his")
+        his_p = prior_entry.get("his")
+        try:
+            his_delta = float(his_t) - float(his_p)
+        except (TypeError, ValueError):
+            his_delta = None
+        try:
+            sci_delta = float(target_entry.get("sci")) - float(prior_entry.get("sci"))
+        except (TypeError, ValueError):
+            sci_delta = None
+        notif_delta = (
+            int(target_entry.get("notification_count") or 0)
+            - int(prior_entry.get("notification_count") or 0)
+        )
+        movers.append(
+            {
+                "lane_key": "/".join(str(x) for x in lane_key),
+                "commodity_name": (
+                    target_entry.get("commodity_name") or ""
+                )[:30],
+                "origin_country": target_entry.get("origin_country") or "",
+                "destination_country": target_entry.get("destination_country") or "",
+                "cvs_prior": cvs_p,
+                "cvs_target": cvs_t,
+                "cvs_delta": delta,
+                "his_delta": his_delta,
+                "sci_delta": sci_delta,
+                "notif_delta": notif_delta,
+                "cvs_mode": target_entry.get("cvs_mode"),
+            }
+        )
+
+    movers.sort(key=lambda m: abs(m["cvs_delta"]), reverse=True)
+    top = movers[: int(args.top_k)]
+
+    if args.json:
+        json.dump(
+            {
+                "prior_period": prior,
+                "target_period": target,
+                "n_lanes_compared": len(movers),
+                "top_movers": top,
+            },
+            sys.stdout,
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        )
+        return 0
+
+    # Aggregate stats first.
+    abs_deltas = [abs(m["cvs_delta"]) for m in movers]
+    abs_deltas.sort()
+    median_abs_delta = (
+        abs_deltas[len(abs_deltas) // 2] if abs_deltas else 0.0
+    )
+    p90_abs_delta = (
+        abs_deltas[int(0.9 * len(abs_deltas))] if abs_deltas else 0.0
+    )
+    rising = sum(1 for m in movers if m["cvs_delta"] > 0.03)
+    falling = sum(1 for m in movers if m["cvs_delta"] < -0.03)
+    stable = len(movers) - rising - falling
+
+    print(
+        f"\nCVS delta distribution {prior} → {target} "
+        f"({len(movers)} lanes compared):"
+    )
+    print(f"  median |Δ|         : {median_abs_delta:.4f}")
+    print(f"  90th pct |Δ|       : {p90_abs_delta:.4f}")
+    print(f"  rising  (Δ > 0.03) : {rising}")
+    print(f"  falling (Δ <-0.03) : {falling}")
+    print(f"  stable             : {stable}")
+
+    print(f"\nTop {len(top)} movers by |Δ CVS|:")
+    _print_table(
+        [
+            "lane",
+            "commodity",
+            "origin → dest",
+            "cvs_t-1",
+            "cvs_t",
+            "Δ cvs",
+            "Δ his",
+            "Δ sci",
+            "Δ notifs",
+            "mode",
+        ],
+        [
+            [
+                m["lane_key"],
+                m["commodity_name"],
+                f"{m['origin_country'][:12]} → {m['destination_country'][:12]}",
+                _fmt_num(m["cvs_prior"], 3),
+                _fmt_num(m["cvs_target"], 3),
+                f"{m['cvs_delta']:+.3f}",
+                _fmt_num(m["his_delta"], 3) if m["his_delta"] is not None else "—",
+                _fmt_num(m["sci_delta"], 3) if m["sci_delta"] is not None else "—",
+                f"{m['notif_delta']:+d}",
+                m["cvs_mode"] or "—",
+            ]
+            for m in top
+        ],
+    )
+    return 0
+
+
 # ── subcommand: coverage ─────────────────────────────────────────────────
 
 
@@ -487,6 +655,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sanity check: counts per period in scored_history.",
     )
     cov.set_defaults(handler=cmd_coverage)
+
+    cl = sub.add_parser(
+        "cliff",
+        parents=[common],
+        help=(
+            "Surface the lanes with the largest absolute CVS deltas "
+            "between (period - 1) and ``period`` (defaults to latest)."
+        ),
+    )
+    cl.add_argument(
+        "--period",
+        type=int,
+        default=None,
+        help="Target period; default is the latest populated period.",
+    )
+    cl.add_argument("--top-k", dest="top_k", type=int, default=10)
+    cl.set_defaults(handler=cmd_cliff)
 
     return p
 

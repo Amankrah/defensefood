@@ -284,6 +284,17 @@ def build_forecaster(name: str, state: Optional[Any] = None) -> Any:
             LightGBMForecaster,
         )
         return LightGBMForecaster()
+    if name == "lightgbm_lite":
+        # Same model but drops the high-cardinality commodity_hs from
+        # the categorical feature list. Useful for the HS-fragmentation
+        # ablation experiment after the 2026-06-07 backtest showed the
+        # full LightGBM losing to persistence on MAE.
+        from defensefood.agent.predictive.lightgbm_forecaster import (
+            LightGBMForecaster,
+        )
+        forecaster = LightGBMForecaster(include_hs_identity=False)
+        forecaster.name = "lightgbm_lite"
+        return forecaster
     raise ValueError(f"Unknown forecaster name: {name!r}")
 
 

@@ -954,6 +954,44 @@ def get_conversation(conversation_id: str):
 # reachable over the network. See backend/script/agent_admin.py.
 
 
+# ── Phase 3 of the predictive epic: forecast endpoint ────────────────────
+
+
+@router.get("/forecast/{commodity_hs}/{destination_m49}/{origin_m49}")
+def forecast_lane(
+    commodity_hs: str,
+    destination_m49: int,
+    origin_m49: int,
+    state: AppState = Depends(get_state),
+):
+    """Next-period CVS forecast for one lane.
+
+    Thin wrapper over the ``predict_lane_next_period`` agent tool; reads
+    ``state.forecaster`` directly so there is no LLM round-trip. Returns
+    ``{ok: false, predictive_unavailable: true}`` with HTTP 200 when the
+    forecaster was not trained at startup, so the frontend can render a
+    "model not available" state gracefully without throwing.
+    """
+    from defensefood.agent.tools import invoke_tool
+
+    raw = invoke_tool(
+        "predict_lane_next_period",
+        {
+            "commodity_hs": str(commodity_hs),
+            "destination_m49": int(destination_m49),
+            "origin_m49": int(origin_m49),
+        },
+        state=state,
+    )
+    # invoke_tool wraps the tool's return in {ok, result|error}. Our tool
+    # returns its own {ok, ...} dict, so unwrap one level and surface it
+    # directly. Any HTTP caller can dispatch on the inner ``ok`` flag.
+    if raw.get("ok") and isinstance(raw.get("result"), dict):
+        return raw["result"]
+    # Surface dispatch errors so the client knows something is genuinely wrong.
+    return raw
+
+
 # ── audit / evidence ──────────────────────────────────────────────────────
 
 

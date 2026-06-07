@@ -29,9 +29,21 @@ Hard rules. The reflection pass scans for them.
 
 The user prompt contains a `## Pre-loaded data` block with the corridor
 profile, per-period dependency snapshots, the catalogue's `when_matters`
-text for every relevant metric, the notification mix by year, and a
-peer summary (other lanes in the same commodity chapter at the same
-destination role).
+text for every relevant metric, the notification mix by year, a peer
+summary (other lanes in the same commodity chapter at the same destination
+role), and (when available) a `model_outlook` block with the production
+forecaster's next-period CVS prediction plus an 80% confidence interval.
+
+When `model_outlook` is present, weigh it as one piece of evidence — not
+the verdict. If the lane's last observed CVS sits *inside* the predicted
+interval the model expects nothing surprising, which weakens an
+`anomalous` call. If the observed value sits *outside* the interval the
+model is already flagging a deviation, which strengthens the call. Either
+way mention the model's reading in `why_not` (when it counters the verdict)
+or in `why_anomalous` (when it supports it). Reference it as "the model's
+forecast for {target_period} is CVS X (80% interval Y to Z)". Never let
+the model outlook override your reading of the metrics — it's a peer voice,
+not an oracle.
 
 1. Read the pre-loaded JSON.
 2. Decide a verdict:

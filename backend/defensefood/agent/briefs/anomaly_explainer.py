@@ -281,6 +281,34 @@ def _preload_anomaly_context(
     if peers:
         out["peers"] = peers
 
+    # Phase 3 of the predictive epic: include the model's next-period
+    # outlook for this lane so the composer can reference it in the
+    # "why not" paragraph (e.g. "the model sees CVS at 0.42 ± 0.08; the
+    # lane is inside the predicted band, which weakens the anomaly call").
+    # Best-effort: a missing forecaster or insufficient history just leaves
+    # the field absent — the composer treats it as "no model signal".
+    forecast = invoke_tool(
+        "predict_lane_next_period",
+        {
+            "commodity_hs": str(hs),
+            "destination_m49": int(dest),
+            "origin_m49": int(origin),
+        },
+        state=state,
+    )
+    if forecast.get("ok"):
+        inner = forecast.get("result") or {}
+        if inner.get("ok"):
+            out["model_outlook"] = {
+                "target_period": inner.get("target_period"),
+                "cvs_point": inner.get("cvs_point"),
+                "cvs_low": inner.get("cvs_low"),
+                "cvs_high": inner.get("cvs_high"),
+                "direction": inner.get("direction"),
+                "confidence": inner.get("confidence"),
+                "drivers": inner.get("drivers") or [],
+            }
+
     return out
 
 

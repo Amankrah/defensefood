@@ -337,6 +337,64 @@ export async function fetchTodayCosts(): Promise<{ rows: CostLedgerRow[] }> {
   return res.json();
 }
 
+// ── predictive forecast (Phase 3 of the predictive epic) ─────────────────
+
+export interface ForecastObservation {
+  period: number;
+  cvs: number | null;
+  his: number | null;
+  notification_count: number;
+}
+
+/**
+ * Discriminated union for the forecast endpoint. ``ok=true`` rows carry the
+ * full forecast; ``ok=false`` rows carry a structured reason the UI can
+ * render as a friendly "model unavailable" state.
+ */
+export type ForecastResponse =
+  | {
+      ok: true;
+      as_of_period: number;
+      target_period: number;
+      cvs_point: number | null;
+      cvs_low: number | null;
+      cvs_high: number | null;
+      his_point: number | null;
+      direction: "rising" | "falling" | "stable";
+      confidence: "low" | "med" | "high";
+      drivers: string[];
+      notes: string[];
+      observed: ForecastObservation;
+    }
+  | {
+      ok: false;
+      predictive_unavailable?: boolean;
+      no_history?: boolean;
+      reason: string;
+    };
+
+export async function fetchForecast(
+  hs: string,
+  dest: number,
+  origin: number
+): Promise<ForecastResponse> {
+  const url = `${API_BASE}/agent/forecast/${encodeURIComponent(
+    hs
+  )}/${dest}/${origin}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (body.detail) detail = body.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`Forecast ${res.status}: ${detail}`);
+  }
+  return res.json();
+}
+
 // ── period shift (Phase 3) ────────────────────────────────────────────────
 
 export type Direction = "rising" | "falling" | "stable";

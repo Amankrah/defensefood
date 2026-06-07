@@ -78,7 +78,15 @@ _NUM_DERIVED_KEYS: tuple[str, ...] = (
 
 # Categorical features. Order is contractual — used for both columns AND
 # the ``categorical_feature=`` list passed to lightgbm.
-_CAT_BASE_KEYS: tuple[str, ...] = (
+#
+# The full HS code is a high-cardinality categorical (~120 values across the
+# corpus). With only ~5 training periods per lane, each tree leaf sees too
+# few examples and the trees memorise lane identity, hurting generalisation.
+# ``LightGBMForecaster(include_hs_identity=False)`` drops it from the
+# categorical list (keeping ``commodity_chapter``, which has ~20 values).
+# Registered as ``"lightgbm_lite"`` in build_forecaster so the CLI can A/B
+# against the full ``"lightgbm"`` variant.
+_CAT_BASE_KEYS_FULL: tuple[str, ...] = (
     "commodity_hs",
     "destination_m49",
     "origin_m49",
@@ -86,6 +94,16 @@ _CAT_BASE_KEYS: tuple[str, ...] = (
     "market_presence",
     "provenance",
 )
+_CAT_BASE_KEYS_LITE: tuple[str, ...] = (
+    "destination_m49",
+    "origin_m49",
+    "cvs_mode",
+    "market_presence",
+    "provenance",
+)
+# Maintain backwards compat: legacy callers that imported _CAT_BASE_KEYS get
+# the full list.
+_CAT_BASE_KEYS: tuple[str, ...] = _CAT_BASE_KEYS_FULL
 _CAT_DERIVED_KEYS: tuple[str, ...] = (
     "commodity_chapter",
     "notif_cadence_shape",
@@ -129,6 +147,12 @@ class LightGBMForecaster:
     # symmetric 80% interval.
     quantiles: tuple[float, float, float] = (0.1, 0.5, 0.9)
 
+    # When False, drop ``commodity_hs`` from the categorical feature list.
+    # The HS-2 ``commodity_chapter`` derived field still carries chapter
+    # identity, but with ~20 values instead of ~120 it doesn't fragment the
+    # training set as badly. See ``_CAT_BASE_KEYS_*`` docstring.
+    include_hs_identity: bool = True
+
     # Populated by fit().
     _models: dict[float, Any] = field(default_factory=dict)
     _cat_mappings: dict[str, dict[Any, int]] = field(default_factory=dict)
@@ -140,6 +164,11 @@ class LightGBMForecaster:
     _is_fit: bool = False
 
     # ── feature row construction ─────────────────────────────────────────
+
+    def _cat_base_keys(self) -> tuple[str, ...]:
+        return (
+            _CAT_BASE_KEYS_FULL if self.include_hs_identity else _CAT_BASE_KEYS_LITE
+        )
 
     def _build_row(
         self, fv: CorridorFeatureVector, *, training: bool
@@ -156,7 +185,7 @@ class LightGBMForecaster:
         for k in _NUM_DERIVED_KEYS:
             row.append(_nan_if_none(fv.derived.get(k)))
 
-        for k in _CAT_BASE_KEYS:
+        for k in self._cat_base_keys():
             v = getattr(fv, k, None)
             row.append(float(self._encode_cat(k, v, training=training)))
         for k in _CAT_DERIVED_KEYS:
@@ -185,13 +214,14 @@ class LightGBMForecaster:
         return (
             list(_NUM_BASE_KEYS)
             + list(_NUM_DERIVED_KEYS)
-            + list(_CAT_BASE_KEYS)
+            + list(self._cat_base_keys())
             + list(_CAT_DERIVED_KEYS)
         )
 
     def _category_columns(self) -> list[int]:
         offset = len(_NUM_BASE_KEYS) + len(_NUM_DERIVED_KEYS)
-        return list(range(offset, offset + len(_CAT_BASE_KEYS) + len(_CAT_DERIVED_KEYS)))
+        n_cat = len(self._cat_base_keys()) + len(_CAT_DERIVED_KEYS)
+        return list(range(offset, offset + n_cat))
 
     # ── training data extraction ─────────────────────────────────────────
 
