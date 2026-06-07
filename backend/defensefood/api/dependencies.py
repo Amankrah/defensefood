@@ -53,6 +53,12 @@ class AppState:
     # Research mode state -- populated once at startup.
     # dependency_history[period][(commodity_hs, dest_m49, origin_m49)] -> metric dict
     dependency_history: dict[int, dict[tuple[str, int, int], dict]] = field(default_factory=dict)
+    # Predictive epic Phase 0:
+    # scored_history[period][(hs, dest, origin)] -> per-period scored corridor
+    # dict including CVS, HIS, notification_count, plus the merged Section 2
+    # fields. Materialised by build_scored_history() after dependency_history
+    # is in place. Lanes with one period only get one entry.
+    scored_history: dict[int, dict[tuple[str, int, int], dict]] = field(default_factory=dict)
     # notifications_by_corridor[(commodity_hs, dest_m49, origin_m49)] -> list of raw RASFF rows
     notifications_by_corridor: dict[tuple[str, int, int], list[dict]] = field(default_factory=dict)
     # coverage: data-quality / coverage diagnostics
@@ -358,12 +364,25 @@ def _build_research_indices(state: AppState) -> None:
                 history[p] = {}
     state.dependency_history = history
 
+    # Phase 0 of the predictive epic — materialise per-period CVS / HIS so
+    # downstream forecasters and the back-test harness have a training
+    # label. Builds on top of dependency_history that was just populated.
+    from defensefood.agent.predictive.historical_snapshots import (
+        build_scored_history,
+    )
+    try:
+        state.scored_history = build_scored_history(state)
+    except Exception as exc:  # noqa: BLE001 - never block startup on this
+        logger.warning("build_scored_history failed: %s", exc)
+        state.scored_history = {}
+
     refresh_coverage(state)
 
     logger.info(
         "Research indices built: %d corridors with raw notifications, "
-        "%d dependency-history periods, %d/%d corridors FAOSTAT-tagged",
-        len(nbc), len(history),
+        "%d dependency-history periods, %d scored-history periods, "
+        "%d/%d corridors FAOSTAT-tagged",
+        len(nbc), len(history), len(state.scored_history),
         state.coverage.get("corridors_faostat", 0),
         state.coverage.get("corridors_total", 0),
     )

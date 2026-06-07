@@ -1,29 +1,42 @@
-"""Phase 5.4 — predictive scaffold sanity checks.
+"""Predictive subsystem — package import + scaffold sanity.
 
-Stubs only at this stage; we verify the interfaces import, the feature
-extractor produces the expected shape from a dependency_history snapshot,
-and the back-test harness raises NotImplementedError as documented.
+Originally written in Phase 5.4 when forecaster + harness were stubs. The
+deeper behavioural tests now live in:
+
+- ``test_historical_snapshots.py`` (Phase 0 — per-period CVS)
+- ``test_predictive_phase1.py``    (Phase 1 — features, baselines, back-test)
+
+This file is kept as a compile-time smoke test: every public symbol on the
+package surface imports, the dataclasses construct, and the feature
+extractor returns ``None`` when the lane has no scored entry.
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 
 def test_predictive_package_imports():
     from defensefood.agent.predictive import (
+        BackTestCase,
         BackTestResult,
+        ChapterMedianForecaster,
         CorridorFeatureVector,
         ForecastInput,
         ForecastOutput,
         Forecaster,  # noqa: F401  (Protocol; importable)
+        PersistenceForecaster,
+        build_forecaster,
+        build_scored_history,
+        coverage_summary,
         extract_corridor_features,
+        fit_residuals_from_training,
+        lane_history,
         run_backtest,
+        walk_forward,
     )
 
-    # Sanity: the dataclass shapes are constructible.
+    # Sanity: the dataclass shapes still construct cleanly.
     fv = CorridorFeatureVector(
         commodity_hs="30771", destination_m49=250, origin_m49=724, period=2023
     )
@@ -42,64 +55,40 @@ def test_predictive_package_imports():
         history=[fv],
     )
     assert len(fi.history) == 1
-    assert isinstance(BackTestResult(forecaster_name="x"), BackTestResult)
+    assert isinstance(
+        BackTestResult(
+            forecaster_name="x", train_periods=[2022], target_period=2023
+        ),
+        BackTestResult,
+    )
+    assert isinstance(
+        BackTestCase(
+            commodity_hs="x",
+            destination_m49=0,
+            origin_m49=0,
+            train_periods=[2022],
+            target_period=2023,
+        ),
+        BackTestCase,
+    )
+
+    # Factory + functions are callable.
     assert callable(run_backtest)
-
-
-def test_extract_corridor_features_reads_from_dependency_history():
-    from defensefood.agent.predictive import extract_corridor_features
-
-    state = SimpleNamespace(
-        corridor_metrics=[
-            {
-                "commodity_hs": "30771",
-                "destination_m49": 250,
-                "origin_m49": 724,
-                "cvs_mode": "sci_crs_his",
-                "market_presence": "confirmed",
-                "provenance": "faostat",
-                "cvs": 0.345,
-            }
-        ],
-        dependency_history={
-            2023: {
-                ("30771", 250, 724): {
-                    "bdi": 0.6,
-                    "ocs": 0.5,
-                    "hhi": 0.4,
-                    "idr": 0.7,
-                    "sci": 1.1,
-                    "his": 0.42,
-                    "hdi": 0.2,
-                    "notification_count": 7,
-                    "cvs": 0.345,
-                }
-            }
-        },
-    )
-
-    fv = extract_corridor_features(
-        state,
-        commodity_hs="30771",
-        destination_m49=250,
-        origin_m49=724,
-        period=2023,
-    )
-    assert fv is not None
-    assert fv.bdi == pytest.approx(0.6)
-    assert fv.cvs == pytest.approx(0.345)
-    assert fv.notification_count == 7
-    assert fv.cvs_mode == "sci_crs_his"
-    assert fv.provenance == "faostat"
+    assert callable(walk_forward)
+    assert callable(fit_residuals_from_training)
+    assert callable(build_scored_history)
+    assert callable(coverage_summary)
+    assert callable(lane_history)
+    assert isinstance(build_forecaster("persistence"), PersistenceForecaster)
+    # ChapterMedian needs a state but should still construct via the factory.
+    cm = build_forecaster("chapter_median", state=SimpleNamespace(scored_history={}))
+    assert isinstance(cm, ChapterMedianForecaster)
 
 
 def test_extract_corridor_features_returns_none_when_snapshot_missing():
     from defensefood.agent.predictive import extract_corridor_features
 
-    state = SimpleNamespace(
-        corridor_metrics=[],
-        dependency_history={2023: {}},
-    )
+    state = SimpleNamespace(scored_history={2023: {}}, corridor_metrics=[])
     assert (
         extract_corridor_features(
             state,
@@ -110,21 +99,3 @@ def test_extract_corridor_features_returns_none_when_snapshot_missing():
         )
         is None
     )
-
-
-def test_run_backtest_raises_not_implemented():
-    """The back-test harness is a Phase 5.4 scaffold placeholder."""
-    from defensefood.agent.predictive import Forecaster, run_backtest
-
-    class _NoopForecaster:
-        def predict(self, query):  # type: ignore[no-untyped-def]
-            raise AssertionError("should not be called by the placeholder harness")
-
-    state = SimpleNamespace(dependency_history={}, corridor_metrics=[])
-    with pytest.raises(NotImplementedError):
-        run_backtest(
-            state,
-            forecaster=_NoopForecaster(),
-            train_periods=[2022],
-            target_period=2023,
-        )
