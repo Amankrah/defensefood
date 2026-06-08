@@ -196,12 +196,123 @@ def _write_reports(
 # ── subcommand: backtest ─────────────────────────────────────────────────
 
 
+def _stratify_walk_by_his(state: Any, walk: Any) -> dict[str, dict[str, Any]]:
+    """Split one walk's cases into hazard-active vs stable lanes by the
+    HIS delta between the target period and its predecessor, then compute
+    MAE / coverage per stratum.
+
+    A lane is "active" if its HIS changed by more than ``HIS_TOL`` between
+    ``target - 1`` and ``target``; otherwise "stable". Lanes where either
+    HIS value is unavailable land in "unknown".
+
+    This is the headline number worth quoting on the ForecastCard: a
+    persistence forecaster's true MAE on stable lanes is far better than
+    the aggregate (which gets dragged by hazard cliffs like the 2023
+    popcorn-corn cluster).
+    """
+    HIS_TOL = 0.01
+
+    history = getattr(state, "scored_history", None) or {}
+    target_snap = history.get(int(walk.target_period)) or {}
+    populated_priors = [
+        int(p) for p, snap in history.items()
+        if isinstance(snap, dict) and snap and int(p) < int(walk.target_period)
+    ]
+    if not populated_priors:
+        return {}
+    prior_period = max(populated_priors)
+    prior_snap = history.get(prior_period) or {}
+
+    buckets: dict[str, dict[str, Any]] = {
+        "stable": {
+            "label": f"|Δ HIS| ≤ {HIS_TOL}",
+            "n_cases": 0,
+            "abs_errors": [],
+            "sq_errors": [],
+            "direction_hits": 0,
+            "direction_total": 0,
+            "interval_hits": 0,
+            "interval_total": 0,
+        },
+        "active": {
+            "label": f"|Δ HIS| > {HIS_TOL}",
+            "n_cases": 0,
+            "abs_errors": [],
+            "sq_errors": [],
+            "direction_hits": 0,
+            "direction_total": 0,
+            "interval_hits": 0,
+            "interval_total": 0,
+        },
+        "unknown": {
+            "label": "his unavailable",
+            "n_cases": 0,
+            "abs_errors": [],
+            "sq_errors": [],
+            "direction_hits": 0,
+            "direction_total": 0,
+            "interval_hits": 0,
+            "interval_total": 0,
+        },
+    }
+
+    for case in walk.cases:
+        if case.error is None:
+            continue
+        lane_key = (case.commodity_hs, case.destination_m49, case.origin_m49)
+        t_entry = target_snap.get(lane_key)
+        p_entry = prior_snap.get(lane_key)
+        stratum = "unknown"
+        if t_entry is not None and p_entry is not None:
+            try:
+                his_delta = float(t_entry.get("his")) - float(p_entry.get("his"))
+            except (TypeError, ValueError):
+                his_delta = None
+            if his_delta is not None:
+                stratum = "active" if abs(his_delta) > HIS_TOL else "stable"
+        b = buckets[stratum]
+        b["n_cases"] += 1
+        b["abs_errors"].append(abs(case.error))
+        b["sq_errors"].append(case.error * case.error)
+        if case.direction_match is not None:
+            b["direction_total"] += 1
+            if case.direction_match:
+                b["direction_hits"] += 1
+        if case.interval_covers_actual is not None:
+            b["interval_total"] += 1
+            if case.interval_covers_actual:
+                b["interval_hits"] += 1
+
+    import math as _math
+    out: dict[str, dict[str, Any]] = {}
+    for key, b in buckets.items():
+        n = b["n_cases"]
+        if n == 0:
+            continue
+        out[key] = {
+            "label": b["label"],
+            "n_cases": n,
+            "mae": sum(b["abs_errors"]) / n,
+            "rmse": _math.sqrt(sum(b["sq_errors"]) / n),
+            "direction_accuracy": (
+                b["direction_hits"] / b["direction_total"]
+                if b["direction_total"] else None
+            ),
+            "interval_coverage": (
+                b["interval_hits"] / b["interval_total"]
+                if b["interval_total"] else None
+            ),
+        }
+    return out
+
+
 def cmd_backtest(args: argparse.Namespace) -> int:
     from defensefood.agent.predictive import build_forecaster, walk_forward
 
     forecasters = (
         [args.forecaster] if args.forecaster else list(ALL_FORECASTER_NAMES)
     )
+    stratify = bool(getattr(args, "stratify_by_his", False))
 
     logger.info("Building corpus state...")
     state = _bootstrap_state()
@@ -216,19 +327,20 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         walks = walk_forward(state, forecaster_factory=_factory)
         walk_payload = []
         for w in walks:
-            walk_payload.append(
-                {
-                    "target_period": w.target_period,
-                    "train_periods": w.train_periods,
-                    "n_cases": w.n_cases,
-                    "n_with_label": w.n_with_label,
-                    "mae": w.mae,
-                    "rmse": w.rmse,
-                    "direction_accuracy": w.direction_accuracy,
-                    "interval_coverage": w.interval_coverage,
-                    "notes": w.notes,
-                }
-            )
+            entry: dict[str, Any] = {
+                "target_period": w.target_period,
+                "train_periods": w.train_periods,
+                "n_cases": w.n_cases,
+                "n_with_label": w.n_with_label,
+                "mae": w.mae,
+                "rmse": w.rmse,
+                "direction_accuracy": w.direction_accuracy,
+                "interval_coverage": w.interval_coverage,
+                "notes": w.notes,
+            }
+            if stratify:
+                entry["his_strata"] = _stratify_walk_by_his(state, w)
+            walk_payload.append(entry)
         forecaster_payloads[name] = {
             "walks": walk_payload,
             "aggregate": _aggregate(walks),
@@ -287,6 +399,43 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         ],
         rows,
     )
+
+    if stratify:
+        strat_rows: list[list[Any]] = []
+        for name, blob in forecaster_payloads.items():
+            for walk in blob.get("walks", []):
+                strata = walk.get("his_strata") or {}
+                for stratum_key in ("stable", "active", "unknown"):
+                    s = strata.get(stratum_key)
+                    if not s:
+                        continue
+                    strat_rows.append(
+                        [
+                            name,
+                            walk["target_period"],
+                            stratum_key,
+                            s["n_cases"],
+                            _fmt_num(s.get("mae")),
+                            _fmt_num(s.get("rmse")),
+                            _fmt_pct(s.get("direction_accuracy")),
+                            _fmt_pct(s.get("interval_coverage")),
+                        ]
+                    )
+        if strat_rows:
+            print("\nStratified by Δ HIS (target vs target-1):")
+            _print_table(
+                [
+                    "forecaster",
+                    "target_period",
+                    "stratum",
+                    "n_cases",
+                    "mae",
+                    "rmse",
+                    "direction_acc",
+                    "interval_cov",
+                ],
+                strat_rows,
+            )
 
     json_path, csv_path = _write_reports(payload)
     print(f"\nWrote {json_path}")
@@ -396,17 +545,20 @@ def cmd_history(args: argparse.Namespace) -> int:
 
 
 def cmd_cliff(args: argparse.Namespace) -> int:
-    """Surface the lanes with the largest absolute CVS deltas between
-    ``period - 1`` and ``period``.
+    """Surface the lanes (or HS-2 chapters) with the largest absolute CVS
+    deltas between ``period - 1`` and ``period``.
 
     Built to investigate the 2026-06-07 backtest result where every
     forecaster degraded sharply at 2023 (persistence MAE jumped from
     0.012-0.020 to 0.040, direction accuracy collapsed to 51%).
 
-    If the chapter-median baseline is stable across years but per-lane
-    metrics shift dramatically in one year, the drift is per-lane — likely
-    a hazard-side event (new RASFF notifications on a subset of lanes)
-    rather than a corpus-wide structural change.
+    Two modes:
+
+    - ``--by lane`` (default): per-lane table, one row per (HS, dest, origin).
+    - ``--by chapter``: rolls up to HS-2 chapter, sorted by total absolute
+      delta. Used to confirm whether the cliff is dominated by a single
+      commodity family (the 2026-06-07 production run pointed at HS 100590
+      popcorn corn — this view makes that visible at a glance).
     """
     state = _bootstrap_state()
     history = getattr(state, "scored_history", None) or {}
@@ -482,14 +634,134 @@ def cmd_cliff(args: argparse.Namespace) -> int:
         )
 
     movers.sort(key=lambda m: abs(m["cvs_delta"]), reverse=True)
-    top = movers[: int(args.top_k)]
 
+    # Distribution stats apply to both --by modes.
+    abs_deltas = sorted(abs(m["cvs_delta"]) for m in movers)
+    median_abs_delta = (
+        abs_deltas[len(abs_deltas) // 2] if abs_deltas else 0.0
+    )
+    p90_abs_delta = (
+        abs_deltas[int(0.9 * len(abs_deltas))] if abs_deltas else 0.0
+    )
+    rising = sum(1 for m in movers if m["cvs_delta"] > 0.03)
+    falling = sum(1 for m in movers if m["cvs_delta"] < -0.03)
+    stable_count = len(movers) - rising - falling
+    distribution = {
+        "n_lanes_compared": len(movers),
+        "median_abs_delta": median_abs_delta,
+        "p90_abs_delta": p90_abs_delta,
+        "n_rising": rising,
+        "n_falling": falling,
+        "n_stable": stable_count,
+    }
+
+    if args.by == "chapter":
+        groups: dict[str, dict[str, Any]] = {}
+        for m in movers:
+            chapter = m["lane_key"].split("/", 1)[0][:2]
+            if not chapter:
+                continue
+            g = groups.setdefault(
+                chapter,
+                {
+                    "chapter": chapter,
+                    "sample_commodity": m["commodity_name"],
+                    "n_lanes": 0,
+                    "sum_abs_delta": 0.0,
+                    "sum_signed_delta": 0.0,
+                    "max_abs_delta": 0.0,
+                    "n_rising": 0,
+                    "n_falling": 0,
+                    "sum_his_delta": 0.0,
+                    "sum_notif_delta": 0,
+                },
+            )
+            d = m["cvs_delta"]
+            g["n_lanes"] += 1
+            g["sum_abs_delta"] += abs(d)
+            g["sum_signed_delta"] += d
+            g["max_abs_delta"] = max(g["max_abs_delta"], abs(d))
+            if d > 0.03:
+                g["n_rising"] += 1
+            elif d < -0.03:
+                g["n_falling"] += 1
+            if m["his_delta"] is not None:
+                g["sum_his_delta"] += m["his_delta"]
+            g["sum_notif_delta"] += m["notif_delta"]
+        chapter_rows = list(groups.values())
+        for g in chapter_rows:
+            g["mean_signed_delta"] = (
+                g["sum_signed_delta"] / g["n_lanes"] if g["n_lanes"] else 0.0
+            )
+        chapter_rows.sort(key=lambda g: g["sum_abs_delta"], reverse=True)
+        top_chapters = chapter_rows[: int(args.top_k)]
+
+        if args.json:
+            json.dump(
+                {
+                    "prior_period": prior,
+                    "target_period": target,
+                    "by": "chapter",
+                    **distribution,
+                    "top_chapters": top_chapters,
+                },
+                sys.stdout,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+            return 0
+
+        print(
+            f"\nCVS delta distribution {prior} → {target} "
+            f"({len(movers)} lanes, {len(chapter_rows)} chapters):"
+        )
+        print(f"  median |Δ|         : {median_abs_delta:.4f}")
+        print(f"  90th pct |Δ|       : {p90_abs_delta:.4f}")
+        print(f"  rising  (Δ > 0.03) : {rising}")
+        print(f"  falling (Δ <-0.03) : {falling}")
+        print(f"  stable             : {stable_count}")
+
+        print(f"\nTop {len(top_chapters)} chapters by Σ|Δ CVS|:")
+        _print_table(
+            [
+                "HS-2",
+                "sample commodity",
+                "n_lanes",
+                "Σ|Δ|",
+                "mean Δ",
+                "max |Δ|",
+                "↑",
+                "↓",
+                "Σ Δ his",
+                "Σ Δ notifs",
+            ],
+            [
+                [
+                    g["chapter"],
+                    (g["sample_commodity"] or "")[:24],
+                    g["n_lanes"],
+                    f"{g['sum_abs_delta']:.3f}",
+                    f"{g['mean_signed_delta']:+.3f}",
+                    f"{g['max_abs_delta']:.3f}",
+                    g["n_rising"],
+                    g["n_falling"],
+                    f"{g['sum_his_delta']:+.3f}",
+                    f"{g['sum_notif_delta']:+d}",
+                ]
+                for g in top_chapters
+            ],
+        )
+        return 0
+
+    top = movers[: int(args.top_k)]
     if args.json:
         json.dump(
             {
                 "prior_period": prior,
                 "target_period": target,
-                "n_lanes_compared": len(movers),
+                "by": "lane",
+                **distribution,
                 "top_movers": top,
             },
             sys.stdout,
@@ -499,19 +771,6 @@ def cmd_cliff(args: argparse.Namespace) -> int:
         )
         return 0
 
-    # Aggregate stats first.
-    abs_deltas = [abs(m["cvs_delta"]) for m in movers]
-    abs_deltas.sort()
-    median_abs_delta = (
-        abs_deltas[len(abs_deltas) // 2] if abs_deltas else 0.0
-    )
-    p90_abs_delta = (
-        abs_deltas[int(0.9 * len(abs_deltas))] if abs_deltas else 0.0
-    )
-    rising = sum(1 for m in movers if m["cvs_delta"] > 0.03)
-    falling = sum(1 for m in movers if m["cvs_delta"] < -0.03)
-    stable = len(movers) - rising - falling
-
     print(
         f"\nCVS delta distribution {prior} → {target} "
         f"({len(movers)} lanes compared):"
@@ -520,7 +779,7 @@ def cmd_cliff(args: argparse.Namespace) -> int:
     print(f"  90th pct |Δ|       : {p90_abs_delta:.4f}")
     print(f"  rising  (Δ > 0.03) : {rising}")
     print(f"  falling (Δ <-0.03) : {falling}")
-    print(f"  stable             : {stable}")
+    print(f"  stable             : {stable_count}")
 
     print(f"\nTop {len(top)} movers by |Δ CVS|:")
     _print_table(
@@ -622,6 +881,18 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["cvs"],
         help="Target metric for the back-test (Phase 1 supports CVS only).",
     )
+    bt.add_argument(
+        "--stratify-by-his",
+        dest="stratify_by_his",
+        action="store_true",
+        help=(
+            "After the standard per-walk table, also print MAE / coverage "
+            "split by lanes where HIS changed materially between "
+            "target-1 and target ('active') vs. lanes where it didn't "
+            "('stable'). Reveals each forecaster's true performance on "
+            "the steady-state subset of the corpus."
+        ),
+    )
     bt.set_defaults(handler=cmd_backtest)
 
     pr = sub.add_parser(
@@ -671,6 +942,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Target period; default is the latest populated period.",
     )
     cl.add_argument("--top-k", dest="top_k", type=int, default=10)
+    cl.add_argument(
+        "--by",
+        choices=("lane", "chapter"),
+        default="lane",
+        help=(
+            "Aggregation level. 'lane' (default) shows per-lane top movers; "
+            "'chapter' rolls up to HS-2 chapter and sorts by total absolute "
+            "delta, useful for spotting commodity-family hazard clusters."
+        ),
+    )
     cl.set_defaults(handler=cmd_cliff)
 
     return p

@@ -300,3 +300,161 @@ def test_cliff_cli_rejects_unknown_period(monkeypatch):
         ["cliff", "--period", "1999"], monkeypatch=monkeypatch
     )
     assert rc != 0
+
+
+# ── C2: cliff --by chapter aggregation ────────────────────────────────
+
+
+def test_cliff_by_chapter_text_output_groups_by_hs2(monkeypatch):
+    """Chapter mode rolls per-lane deltas up to HS-2. With the fixture's
+    7 'rising' lanes in chapter 30 (Δ +0.04 each) and 8 flat lanes in
+    chapter 10 (Δ ≈ 0), chapter 30 must dominate the Σ|Δ| ranking."""
+    rc, out = _run_cli(
+        ["cliff", "--by", "chapter", "--top-k", "5"], monkeypatch=monkeypatch
+    )
+    assert rc == 0
+    assert "Top" in out and "chapters" in out
+    assert "HS-2" in out
+    # Chapter 30 sum_abs ≈ 7 × 0.04 = 0.28; chapter 10 sum_abs ≈ 0.
+    # Chapter 30 must appear at the head of the chapter table.
+    chapter_table_start = out.index("HS-2")
+    table_body = out[chapter_table_start:]
+    pos30 = table_body.find("30 ")
+    pos10 = table_body.find("10 ")
+    assert pos30 != -1
+    assert pos10 == -1 or pos30 < pos10
+
+
+def test_cliff_by_chapter_json_payload_shape(monkeypatch):
+    rc, out = _run_cli(
+        ["cliff", "--by", "chapter", "--top-k", "5", "--json"],
+        monkeypatch=monkeypatch,
+    )
+    assert rc == 0
+    payload = json.loads(out)
+    assert payload["by"] == "chapter"
+    assert payload["prior_period"] == 2022
+    assert payload["target_period"] == 2023
+    top = payload["top_chapters"]
+    assert len(top) >= 1
+    # First chapter is the rising one (chapter "30"); it must have
+    # n_lanes == 7 and sum_signed_delta ≈ 7 × 0.04 = 0.28.
+    first = top[0]
+    assert first["chapter"] == "30"
+    assert first["n_lanes"] == 7
+    assert 0.25 <= first["sum_signed_delta"] <= 0.32
+    assert first["n_rising"] >= 6
+    # Distribution stats still present alongside the chapter rollup.
+    for key in (
+        "n_lanes_compared", "median_abs_delta", "p90_abs_delta",
+        "n_rising", "n_falling", "n_stable",
+    ):
+        assert key in payload
+
+
+def test_cliff_lane_mode_json_still_carries_distribution(monkeypatch):
+    """Regression: distribution stats moved into a shared block — make sure
+    the default lane-mode JSON still includes them."""
+    rc, out = _run_cli(
+        ["cliff", "--top-k", "3", "--json"], monkeypatch=monkeypatch
+    )
+    assert rc == 0
+    payload = json.loads(out)
+    assert payload["by"] == "lane"
+    assert "top_movers" in payload
+    assert "median_abs_delta" in payload
+    assert "n_rising" in payload
+
+
+# ── D: backtest --stratify-by-his ─────────────────────────────────────
+
+
+def test_backtest_stratify_by_his_groups_cases_by_his_change(
+    tmp_path, monkeypatch
+):
+    """Persistence is perfect on flat-HIS lanes (chapter 10 in the fixture)
+    and miss-by-step on rising-HIS lanes (chapter 30). The stratified table
+    must reflect that: 'stable' MAE near zero, 'active' MAE several times
+    higher."""
+    from defensefood.api import dependencies as deps
+    from script import predictive
+
+    state = _fixture_state()
+    # The phase2 CLI test patches these so _bootstrap_state doesn't try
+    # to recompute coverage / corridor metrics on the SimpleNamespace.
+    state.scoring_config = None
+    state.dependency_history = {}
+    state.corridors = []
+    state.notifications_by_corridor = {}
+    state.coverage = {}
+    deps._state = state
+    monkeypatch.setattr(deps, "_load_data", lambda s: None)
+    monkeypatch.setattr(predictive, "OUTPUT_DIR", tmp_path)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = predictive.main(
+            ["backtest", "--forecaster", "persistence", "--stratify-by-his"]
+        )
+    assert rc == 0
+    out = buf.getvalue()
+    assert "Stratified by Δ HIS" in out
+    assert "stable" in out
+    assert "active" in out
+
+    payload = json.loads(
+        list(tmp_path.glob("predictive_eval_*.json"))[0].read_text(encoding="utf-8")
+    )
+    walks = payload["forecasters"]["persistence"]["walks"]
+    walks_with_strata = [w for w in walks if w.get("his_strata")]
+    assert walks_with_strata, "no walk produced his_strata"
+
+    # Find a walk where both buckets have cases.
+    bucket_walk = next(
+        (
+            w for w in walks_with_strata
+            if "stable" in w["his_strata"] and "active" in w["his_strata"]
+        ),
+        None,
+    )
+    assert bucket_walk is not None
+    stable_mae = bucket_walk["his_strata"]["stable"]["mae"]
+    active_mae = bucket_walk["his_strata"]["active"]["mae"]
+    # Persistence on flat-HIS lanes should be much better than on
+    # hazard-active lanes.
+    assert stable_mae < active_mae
+    # The fixture's stable lanes have a tiny jitter-only delta, so MAE
+    # should be near zero (under 0.01).
+    assert stable_mae < 0.01
+
+
+def test_backtest_without_stratify_flag_omits_strata(tmp_path, monkeypatch):
+    """Default behavior is unchanged: no his_strata block in the JSON
+    when the flag isn't passed."""
+    from defensefood.api import dependencies as deps
+    from script import predictive
+
+    state = _fixture_state()
+    state.scoring_config = None
+    state.dependency_history = {}
+    state.corridors = []
+    state.notifications_by_corridor = {}
+    state.coverage = {}
+    deps._state = state
+    monkeypatch.setattr(deps, "_load_data", lambda s: None)
+    monkeypatch.setattr(predictive, "OUTPUT_DIR", tmp_path)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = predictive.main(
+            ["backtest", "--forecaster", "persistence"]
+        )
+    assert rc == 0
+    assert "Stratified by Δ HIS" not in buf.getvalue()
+
+    payload = json.loads(
+        list(tmp_path.glob("predictive_eval_*.json"))[0].read_text(encoding="utf-8")
+    )
+    walks = payload["forecasters"]["persistence"]["walks"]
+    for w in walks:
+        assert "his_strata" not in w
